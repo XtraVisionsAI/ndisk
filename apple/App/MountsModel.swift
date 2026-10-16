@@ -69,7 +69,11 @@ final class MountsModel: ObservableObject {
             do {
                 guard let manager = NSFileProviderManager(for: domain(m)) else { return }
                 let url = try await manager.getUserVisibleURL(for: .rootContainer)
-                NSWorkspace.shared.open(url)
+                // 沙盒 App 对 CloudStorage 路径没有文件访问权，不能 open(url)；
+                // 请 Finder 自行打开该位置则不需要权限。
+                if !NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path) {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             } catch {
                 lastError = "无法打开：\(error)"
             }
