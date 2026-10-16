@@ -18,6 +18,8 @@ pub enum Error {
     DirectoryNotEmpty(String),
     #[error("permission denied: {0}")]
     PermissionDenied(String),
+    #[error("read-only mount")]
+    ReadOnly,
     /// 远端对象已被他人修改（ETag 不匹配，HTTP 412）。
     #[error("conflict on {key}: expected etag {expected:?}, remote has {actual:?}")]
     Conflict {
@@ -64,6 +66,7 @@ impl Error {
             Error::IsADirectory(_) => libc_consts::EISDIR,
             Error::DirectoryNotEmpty(_) => libc_consts::ENOTEMPTY,
             Error::PermissionDenied(_) => libc_consts::EACCES,
+            Error::ReadOnly => libc_consts::EROFS,
             Error::Conflict { .. } => libc_consts::ESTALE,
             Error::Offline(_) => libc_consts::ENETDOWN,
             Error::Unsupported(_) => libc_consts::ENOSYS,
@@ -80,6 +83,7 @@ mod libc_consts {
     pub const EEXIST: i32 = 17;
     pub const ENOTDIR: i32 = 20;
     pub const EISDIR: i32 = 21;
+    pub const EROFS: i32 = 30;
     pub const ENOSYS: i32 = 38;
     pub const ENOTEMPTY: i32 = 39;
     pub const ESTALE: i32 = 116;

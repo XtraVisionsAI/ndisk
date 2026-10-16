@@ -107,11 +107,8 @@ impl ContentCache {
     }
 
     /// 计算本地状态：Cloud / Partial / Cached（不含 Dirty/Uploading，由 writeback 层叠加）。
-    pub fn local_state(&self, id: ItemId, etag: Option<&str>, size: u64) -> Result<LocalState> {
-        let Some(etag) = etag else {
-            return Ok(LocalState::Cloud);
-        };
-        let have = self.meta.cached_blocks(id, etag)?.len() as u64;
+    pub fn local_state(&self, id: ItemId, version: &str, size: u64) -> Result<LocalState> {
+        let have = self.meta.cached_blocks(id, version)?.len() as u64;
         let need = self.block_count(size);
         Ok(if have == 0 && need > 0 {
             LocalState::Cloud

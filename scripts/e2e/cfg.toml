@@ -1,0 +1,26 @@
+id = "test"
+display_name = "Test"
+read_only = false
+
+[backend]
+type = "s3"
+bucket = "test"
+prefix = ""
+region = "us-east-1"
+endpoint = "http://ndisk-s3:7070"
+force_path_style = true
+dir_markers = true
+
+[backend.auth]
+method = "static"
+access_key_id = "testkey"
+secret_ref = "env"
+
+[cache]
+block_size = 4194304
+multipart_threshold = 8388608
+part_size = 5242880
+
+[cache.policy]
+mode = "ttl"
+value = 3600

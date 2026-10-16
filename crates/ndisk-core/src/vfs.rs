@@ -78,7 +78,7 @@ impl Vfs {
 
     fn fill_local_state(&self, n: &mut Node) -> Result<()> {
         if n.kind == Kind::File && n.local != LocalState::Pinned {
-            n.local = self.content.local_state(n.id, n.etag.as_deref(), n.size)?;
+            n.local = self.content.local_state(n.id, &n.cache_key(), n.size)?;
         }
         Ok(())
     }

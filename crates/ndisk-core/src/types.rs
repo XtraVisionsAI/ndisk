@@ -39,6 +39,24 @@ impl Entry {
             .next()
             .unwrap_or("")
     }
+
+    /// 内容缓存的版本键。优先 etag；部分 S3 兼容实现不返回 etag，退化为 mtime+size。
+    pub fn cache_key(&self) -> String {
+        cache_key(self.etag.as_deref(), self.mtime, self.size)
+    }
+}
+
+pub(crate) fn cache_key(etag: Option<&str>, mtime: Option<SystemTime>, size: u64) -> String {
+    match etag {
+        Some(e) => e.to_string(),
+        None => {
+            let secs = mtime
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("m{secs}s{size}")
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -121,6 +139,13 @@ pub struct Node {
     pub remote_key: String,
     pub local: LocalState,
     pub policy: Option<CachePolicy>,
+}
+
+impl Node {
+    /// 见 [`Entry::cache_key`]。
+    pub fn cache_key(&self) -> String {
+        cache_key(self.etag.as_deref(), self.mtime, self.size)
+    }
 }
 
 /// 变更序号，供 File Provider `enumerateChanges(from:)` 使用。

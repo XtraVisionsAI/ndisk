@@ -109,7 +109,7 @@ pub trait Backend: Send + Sync {
 **内容缓存**（分块文件）
 
 - 布局：`<cache_root>/<mount_id>/blocks/<item_id>/<etag>/<block_no>`，块大小默认 8 MiB。
-- 任意 `etag` 变化即整体失效，不做局部比对。
+- 任意 `etag` 变化即整体失效，不做局部比对。部分 S3 兼容实现（如 versitygw posix 后端对外部写入的文件）HEAD 不返回 etag，此时版本键退化为 `mtime+size`；If-Match 冲突检测仍只使用真实 etag。
 - 三种策略，按挂载点设默认值，可对目录 / 文件单独覆盖：
   - `ttl(duration)`：最后访问超过时长后由后台驱逐器删除本地块；
   - `always`：固定，不驱逐，元数据变化时主动预取；
@@ -161,7 +161,9 @@ pub trait Backend: Send + Sync {
 
 ### 4.2 Linux
 
-- `ndisk-fuse`：基于 `fuser`（MIT）实现 FUSE3，inode 即 `item_id`，默认 `allow_other` 关闭。
+- `ndisk-fuse`：基于 `fuser`（MIT，关闭 libfuse 特性走纯 Rust 挂载，运行时只需 fusermount3）实现 FUSE3，inode 即 `item_id`，默认 `allow_other` 关闭。
+- fuser 回调是同步的：`mount` 在 runtime 之外的线程运行，回调内用 `Handle::block_on` 调引擎。
+- 写路径：以写模式 `open` 时取得脏文件句柄，`write` 直接 pwrite 脏文件；`release` 登记写回并后台上传；`fsync` 同步等待上传完成。上传进行中再次打开写入会等待该文件的写回锁。
 - `ndisk` CLI：`mount / umount / ls / status / cache pin|unpin|evict / config / auth`。
 - 桌面增强（可选）：托盘用 `ksni` 或 `tray-icon`；角标通过 Nautilus Python 扩展 / Dolphin 插件读取 CLI 暴露的 D-Bus 状态接口。
 
@@ -194,7 +196,7 @@ ndisk/
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 MinIO 读写，断电重启后上传续传 |
+| M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 S3 兼容服务读写，进程被杀后重挂载上传续传。**已完成**（2026-10-16，见 `scripts/e2e`）|
 | M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作 |
 | M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试 |
 | M4 | Windows Cloud Files API | 资源管理器中占位符、按需下载、角标 |

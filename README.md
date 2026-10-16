@@ -17,6 +17,19 @@ cargo build --workspace
 cargo run -p ndisk-cli -- --help
 ```
 
+## Linux 挂载
+
+```sh
+ndisk config > my.toml            # 生成配置模板后修改 bucket / endpoint / auth
+export NDISK_S3_SECRET=...        # 骨架阶段静态密钥从环境变量读取
+mkdir -p ~/mnt/s3
+ndisk -c my.toml mount ~/mnt/s3   # 前台运行，fusermount3 -u ~/mnt/s3 卸载
+```
+
+运行时依赖 `fuse3`（提供 fusermount3）。端到端测试在 Docker 中进行：`scripts/e2e/e2e.sh`，
+它会启动 versitygw 作为 S3 兼容服务，覆盖读写、分片上传、重命名、删除、外部变更可见性，
+以及上传中 SIGKILL 后重挂载续传。
+
 ## 授权
 
 核心库、后端、CLI、FUSE 以 Apache-2.0 发布。图形应用与系统扩展属于商用版。

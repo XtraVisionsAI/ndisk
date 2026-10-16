@@ -48,6 +48,46 @@ impl Engine {
         })
     }
 
+    /// 节点视图，叠加写路径状态：脏文件存在时大小取脏文件，状态为 Dirty / Uploading。
+    pub fn stat(&self, id: ItemId) -> Result<Node> {
+        let mut n = self.vfs.get(id)?;
+        if n.kind == Kind::File {
+            let dirty = self.vfs.content().dirty_path(id);
+            if let Ok(m) = std::fs::metadata(&dirty) {
+                n.size = m.len();
+                n.mtime = m.modified().ok();
+                n.local = match self.vfs.meta().upload_get(id)? {
+                    Some(rec) if rec.state == crate::cache::meta::UploadState::Uploading => {
+                        LocalState::Uploading
+                    }
+                    _ => LocalState::Dirty,
+                };
+            }
+        }
+        Ok(n)
+    }
+
+    pub fn ensure_writable(&self) -> Result<()> {
+        if self.cfg.read_only {
+            Err(Error::ReadOnly)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// 在后台执行上传，不阻塞调用方（FUSE release / File Provider modifyItem 之后调用）。
+    pub fn spawn_flush(self: &Arc<Self>, id: ItemId) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            match me.writeback.flush(id).await {
+                Ok(e) => tracing::info!(item = id.0, key = %e.key, "upload complete"),
+                Err(e) => {
+                    tracing::warn!(item = id.0, error = %e, "upload failed; will retry on resume")
+                }
+            }
+        });
+    }
+
     // ---- 读路径 ----
 
     /// 读取文件内容：命中脏文件则读脏文件，否则按块从缓存/后端读取。
@@ -67,16 +107,13 @@ impl Engine {
         let first = range.start / bs;
         let last = (end - 1) / bs;
         ensure_blocks(&self.vfs, &self.sched, &n, first..last + 1).await?;
-        let etag = n
-            .etag
-            .as_deref()
-            .ok_or_else(|| Error::NotFound(n.name.clone()))?;
+        let version = n.cache_key();
         let mut out = Vec::with_capacity((end - range.start) as usize);
         for b in first..=last {
             let data = self
                 .vfs
                 .content()
-                .read_block(id, etag, b)
+                .read_block(id, &version, b)
                 .await?
                 .ok_or_else(|| Error::Io(std::io::Error::other("block vanished")))?;
             let br = self.vfs.content().block_range(b, n.size);
@@ -142,19 +179,20 @@ pub(crate) async fn ensure_blocks(
     n: &Node,
     blocks: Range<u64>,
 ) -> Result<()> {
-    let Some(etag) = n.etag.as_deref() else {
+    if n.kind != Kind::File {
         return Ok(());
-    };
+    }
+    let version = n.cache_key();
     let content = vfs.content();
     let mut tasks = tokio::task::JoinSet::new();
     for b in blocks {
-        if content.has_block(n.id, etag, b) {
+        if content.has_block(n.id, &version, b) {
             continue;
         }
         let vfs = vfs.clone();
         let sched = sched.clone();
         let n = n.clone();
-        let etag = etag.to_string();
+        let etag = version.clone();
         tasks.spawn(async move {
             let _permit = sched.download.acquire().await.expect("semaphore closed");
             let r = vfs.content().block_range(b, n.size);

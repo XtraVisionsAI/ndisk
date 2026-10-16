@@ -1041,7 +1041,6 @@ dependencies = [
  "memchr",
  "nix",
  "page_size",
- "pkg-config",
  "smallvec",
  "zerocopy",
 ]
@@ -1665,6 +1664,7 @@ dependencies = [
  "clap",
  "ndisk-backend-s3",
  "ndisk-core",
+ "ndisk-fuse",
  "serde_json",
  "tokio",
  "tracing",

@@ -1,7 +1,7 @@
 //! `ndisk` 命令行。Linux 服务器场景的主要入口，也用于各平台的调试。
 //!
 //! 子命令规划：mount / umount / ls / cat / status / cache pin|unpin|evict / config / auth。
-//! 当前骨架实现了 ls、cat、status、cache 三组，mount 在 ndisk-fuse 中实现。
+//! mount 子命令在 Linux 上通过 ndisk-fuse 挂载，其他平台返回不支持。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,6 +30,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 挂载为 FUSE 文件系统（Linux），前台运行直到卸载或 Ctrl-C。
+    Mount {
+        mountpoint: PathBuf,
+        /// 允许其他用户访问（需要 /etc/fuse.conf 开启 user_allow_other）。
+        #[arg(long)]
+        allow_other: bool,
+        /// 后台维护（容量驱逐）间隔秒数。
+        #[arg(long, default_value_t = 60)]
+        maintain_interval: u64,
+    },
     /// 列出目录（相对挂载根的路径）。
     Ls {
         #[arg(default_value = "/")]
@@ -73,9 +83,46 @@ async fn main() -> Result<()> {
     let cfg_path = cli.config.context("--config is required")?;
     let cfg = MountConfig::from_toml(&std::fs::read_to_string(&cfg_path)?)?;
     let cache_root = cli.cache_dir.unwrap_or_else(|| default_cache_dir(&cfg.id));
-    let engine = open_engine(&cfg, cache_root).await?;
+    let engine = Arc::new(open_engine(&cfg, cache_root).await?);
 
     match cli.cmd {
+        Cmd::Mount {
+            mountpoint,
+            allow_other,
+            maintain_interval,
+        } => {
+            anyhow::ensure!(
+                mountpoint.is_dir(),
+                "mountpoint {} is not a directory",
+                mountpoint.display()
+            );
+            // 启动时恢复未完成的上传。
+            engine.resume_uploads().await?;
+            // 后台维护任务。
+            let maint = engine.clone();
+            tokio::spawn(async move {
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_secs(maintain_interval.max(5)));
+                loop {
+                    tick.tick().await;
+                    if let Err(e) = maint.maintain().await {
+                        tracing::warn!(error = %e, "maintenance failed");
+                    }
+                }
+            });
+            tracing::info!(mountpoint = %mountpoint.display(), "mounting");
+            // fuser 的回调是同步的，必须在 runtime 之外的线程里跑，回调内用 Handle::block_on。
+            let rt = tokio::runtime::Handle::current();
+            let eng = engine.clone();
+            let opts = ndisk_fuse::MountOptions {
+                allow_other,
+                auto_unmount: true,
+            };
+            let mp = mountpoint.clone();
+            let join = tokio::task::spawn_blocking(move || ndisk_fuse::mount(eng, rt, &mp, opts));
+            join.await??;
+            tracing::info!("unmounted");
+        }
         Cmd::Ls { path, refresh } => {
             let id = resolve(&engine, &path).await?;
             for n in engine.vfs.list(id, refresh).await? {

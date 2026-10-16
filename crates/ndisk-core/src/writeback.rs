@@ -3,7 +3,8 @@
 //! 写入永远先落到脏文件；close 后登记到 `uploads` 表并排队。分片上传每完成一个 part
 //! 就持久化进度，进程重启后 `resume_all` 用同一个 upload_id 继续。
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -19,37 +20,54 @@ pub struct Writeback {
     vfs: Arc<Vfs>,
     sched: Scheduler,
     cfg: CacheConfig,
+    /// 每个节点一把锁：上传进行中时，再次打开写入必须等待，避免脏文件被边读边改。
+    locks: Mutex<HashMap<ItemId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Writeback {
     pub fn new(vfs: Arc<Vfs>, sched: Scheduler, cfg: CacheConfig) -> Self {
-        Self { vfs, sched, cfg }
+        Self {
+            vfs,
+            sched,
+            cfg,
+            locks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 取得节点锁。调用方持有返回的 guard 期间，该节点不会被并发上传。
+    pub async fn lock(&self, id: ItemId) -> tokio::sync::OwnedMutexGuard<()> {
+        let m = self.locks.lock().unwrap().entry(id).or_default().clone();
+        m.lock_owned().await
+    }
+
+    /// 是否有未完成的写回记录。
+    pub fn is_pending(&self, id: ItemId) -> Result<bool> {
+        Ok(self.vfs.meta().upload_get(id)?.is_some())
     }
 
     /// 打开文件准备写入：确保脏文件存在（远端有内容则先拉全量）。
     pub async fn open_for_write(&self, id: ItemId) -> Result<std::path::PathBuf> {
+        let _guard = self.lock(id).await;
         let n = self.vfs.get(id)?;
         let path = self.vfs.content().dirty_path(id);
         if path.exists() {
             return Ok(path);
         }
-        match &n.etag {
-            Some(etag) if n.size > 0 => {
-                crate::engine::ensure_blocks(
-                    &self.vfs,
-                    &self.sched,
-                    &n,
-                    0..self.vfs.content().block_count(n.size),
-                )
+        // size 为 0 时（含本地新建尚未上传的文件）直接建空脏文件。
+        if n.size > 0 {
+            crate::engine::ensure_blocks(
+                &self.vfs,
+                &self.sched,
+                &n,
+                0..self.vfs.content().block_count(n.size),
+            )
+            .await?;
+            self.vfs
+                .content()
+                .materialize_dirty(id, &n.cache_key(), n.size)
                 .await?;
-                self.vfs
-                    .content()
-                    .materialize_dirty(id, etag, n.size)
-                    .await?;
-            }
-            _ => {
-                tokio::fs::File::create(&path).await?;
-            }
+        } else {
+            tokio::fs::File::create(&path).await?;
         }
         Ok(path)
     }
@@ -86,6 +104,7 @@ impl Writeback {
 
     /// 执行一个节点的上传（可被重复调用以续传）。
     pub async fn flush(&self, id: ItemId) -> Result<Entry> {
+        let _guard = self.lock(id).await;
         let mut rec = self
             .vfs
             .meta()
@@ -123,10 +142,10 @@ impl Writeback {
                     .upsert(n.parent, &n.name, &entry, &entry.key)?;
                 self.vfs.meta().upload_remove(id)?;
                 // 用脏文件内容直接填充新 etag 的块缓存，避免重复下载。
-                if let Some(etag) = &entry.etag {
-                    self.promote_dirty_to_blocks(id, etag, &path, size).await?;
-                    self.vfs.content().drop_stale_versions(id, etag).await?;
-                }
+                let version = entry.cache_key();
+                self.promote_dirty_to_blocks(id, &version, &path, size)
+                    .await?;
+                self.vfs.content().drop_stale_versions(id, &version).await?;
                 self.vfs.content().remove_dirty(id).await?;
                 Ok(entry)
             }
