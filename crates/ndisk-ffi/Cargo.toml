@@ -1,0 +1,18 @@
+[package]
+name = "ndisk-ffi"
+description = "FFI surface (UniFFI) consumed by the macOS File Provider extension and desktop apps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+ndisk-core = { workspace = true }
+ndisk-backend-s3 = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+# uniffi = { version = "0.29", features = ["cli"] }   # M2 阶段启用，MPL-2.0
