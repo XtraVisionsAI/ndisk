@@ -16,15 +16,16 @@ func render(_ px: Int) -> Data {
     let inset = s * 0.1
     let rect = NSRect(x: inset, y: inset, width: s - 2 * inset, height: s - 2 * inset)
     let path = NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.225, yRadius: rect.width * 0.225)
-    let gradient = NSGradient(starting: NSColor(calibratedRed: 0.10, green: 0.56, blue: 1.0, alpha: 1),
-                              ending: NSColor(calibratedRed: 0.02, green: 0.30, blue: 0.75, alpha: 1))!
+    let gradient = NSGradient(starting: NSColor(calibratedRed: 0.36, green: 0.72, blue: 1.0, alpha: 1),
+                              ending: NSColor(calibratedRed: 0.12, green: 0.50, blue: 0.96, alpha: 1))!
     gradient.draw(in: path, angle: -90)
-    let cfg = NSImage.SymbolConfiguration(pointSize: rect.width * 0.52, weight: .medium)
+    // 只留一个白色实心云朵，小尺寸下也清晰。
+    let cfg = NSImage.SymbolConfiguration(pointSize: rect.width * 0.58, weight: .regular)
         .applying(.init(paletteColors: [.white]))
-    if let sym = NSImage(systemSymbolName: "externaldrive.badge.icloud", accessibilityDescription: nil)?
+    if let sym = NSImage(systemSymbolName: "cloud.fill", accessibilityDescription: nil)?
         .withSymbolConfiguration(cfg) {
         let sz = sym.size
-        sym.draw(in: NSRect(x: (s - sz.width) / 2, y: (s - sz.height) / 2 - rect.height * 0.02, width: sz.width, height: sz.height))
+        sym.draw(in: NSRect(x: (s - sz.width) / 2, y: (s - sz.height) / 2, width: sz.width, height: sz.height))
     }
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
