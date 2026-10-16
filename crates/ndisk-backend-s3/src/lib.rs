@@ -91,7 +91,7 @@ impl S3Backend {
             }
         };
         let shared = loader.load().await;
-        let build = |region: Option<String>| {
+        let build = |region: Option<String>, path_style: bool| {
             let mut b = aws_sdk_s3::config::Builder::from(&shared);
             if let Some(ep) = &cfg.endpoint {
                 b = b.endpoint_url(ep);
@@ -99,17 +99,26 @@ impl S3Backend {
             if let Some(r) = region {
                 b = b.region(aws_config::Region::new(r));
             }
-            b = b.force_path_style(cfg.force_path_style);
+            b = b.force_path_style(path_style);
             Client::from_conf(b.build())
         };
-        let mut client = build(None);
+        let mut client = build(None, cfg.force_path_style);
+        if cfg.endpoint.is_some() && !cfg.force_path_style {
+            // 自定义 endpoint 先试虚拟主机式；`bucket.host` 解析不到或连不上时退回路径式（MinIO、IP 地址等）。
+            if let Err(e) = client.head_bucket().bucket(&cfg.bucket).send().await {
+                if matches!(e, aws_sdk_s3::error::SdkError::DispatchFailure(_)) {
+                    tracing::info!(bucket = %cfg.bucket, "virtual-hosted addressing unreachable; using path-style");
+                    client = build(None, true);
+                }
+            }
+        }
         if cfg.endpoint.is_none() {
             // 真实 AWS：Region 填错时 S3 返回 301/400 并在 x-amz-bucket-region 头里给出正确区域，自动切换。
             if let Some(actual) = detect_bucket_region(&client, &cfg.bucket).await? {
                 let configured = cfg.region.clone().unwrap_or_else(|| "us-east-1".into());
                 if actual != configured {
                     tracing::info!(bucket = %cfg.bucket, configured, actual, "bucket is in another region; switching");
-                    client = build(Some(actual));
+                    client = build(Some(actual), cfg.force_path_style);
                 }
             }
         }

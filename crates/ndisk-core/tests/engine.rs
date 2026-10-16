@@ -229,16 +229,17 @@ fn config_with(block_size: u64, policy: CachePolicy, max_bytes: u64) -> MountCon
             dir_markers: true,
             copy_threshold: None,
         }),
-        cache: CacheConfig {
+        cache: Some(CacheConfig {
             block_size,
             policy,
             max_bytes,
             multipart_threshold: 4096,
             part_size: 5 * 1024 * 1024,
             ..Default::default()
-        },
-        network: Default::default(),
+        }),
+        network: None,
         read_only: false,
+        overrides: Default::default(),
     }
 }
 
@@ -532,7 +533,7 @@ async fn pinned_directory_prefetches_new_children() {
     seed(&mem, &["data/p/x.bin"], 2000).await;
     let cfg = {
         let mut c = config_with(1024, CachePolicy::Ttl(H), 1 << 40);
-        c.cache.dir_ttl = std::time::Duration::ZERO; // 每次维护都重新列举
+        c.cache.as_mut().unwrap().dir_ttl = std::time::Duration::ZERO; // 每次维护都重新列举
         c
     };
     let (e, _d) = setup_with(mem.clone(), cfg);
@@ -727,4 +728,45 @@ fn conflict_name_format() {
         ndisk_core::engine::conflict_name(".env", t),
         ".env (conflicted copy 2026-10-16 13-30-05)"
     );
+}
+
+#[test]
+fn global_settings_apply_and_overrides() {
+    use ndisk_core::config::*;
+    let mut g = GlobalSettings::default();
+    g.cache.max_bytes = 30 << 30;
+    g.cache.policy = CachePolicy::Ttl(H);
+    g.network.proxy = Some("env".into());
+    let toml = r#"
+id = "m"
+display_name = "M"
+read_only = false
+[backend]
+type = "s3"
+bucket = "b"
+[backend.auth]
+method = "default"
+[overrides]
+policy = { mode = "always" }
+"#;
+    let m = MountConfig::from_toml(toml).unwrap().apply(&g, 3);
+    assert_eq!(
+        m.cache().max_bytes,
+        10 << 30,
+        "global cap shared by 3 mounts"
+    );
+    assert_eq!(m.cache().policy, CachePolicy::Always, "mount override wins");
+    assert_eq!(m.network().proxy.as_deref(), Some("env"));
+    // 无覆盖时用全局策略
+    let m2 = MountConfig::from_toml(toml.replace("policy = { mode = \"always\" }", "").as_str())
+        .unwrap()
+        .apply(&g, 1);
+    assert_eq!(m2.cache().policy, CachePolicy::Ttl(H));
+    // 往返：overrides 为空时不写出
+    assert!(!m2.to_toml().unwrap().contains("[overrides]"));
+    assert!(GlobalSettings::from_toml(&g.to_toml().unwrap())
+        .unwrap()
+        .network
+        .proxy
+        .is_some());
 }

@@ -56,6 +56,28 @@ public struct SharedStore: Sendable {
     public func dataURL(_ id: String) -> URL { supportDir.appendingPathComponent("data/\(id)", isDirectory: true) }
     public func cacheURL(_ id: String) -> URL { cachesDir.appendingPathComponent(id, isDirectory: true) }
 
+    // MARK: 全局设置
+
+    public var settingsURL: URL { supportDir.appendingPathComponent("settings.toml") }
+
+    public func settingsToml() -> String? {
+        try? String(contentsOf: settingsURL, encoding: .utf8)
+    }
+
+    public func saveSettings(toml: String) throws {
+        try FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        try toml.write(to: settingsURL, atomically: true, encoding: .utf8)
+    }
+
+    /// 配置相关文件的最后修改时间，扩展据此判断是否需要重开会话。
+    public func configFingerprint(mountId: String) -> String {
+        func m(_ u: URL) -> String {
+            let d = (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return String(d.timeIntervalSince1970)
+        }
+        return m(configURL(mountId)) + "|" + m(settingsURL)
+    }
+
     public func mounts() -> [Mount] {
         migrateLegacyLayout()
         guard let data = try? Data(contentsOf: mountsFile) else { return [] }
@@ -116,8 +138,10 @@ public struct SharedStore: Sendable {
         let toml = try String(contentsOf: configURL(mountId), encoding: .utf8)
         try FileManager.default.createDirectory(at: dataURL(mountId), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cacheURL(mountId), withIntermediateDirectories: true)
-        return try await NdiskKit.openSession(configToml: toml, dataDir: dataURL(mountId).path,
-                                              cacheDir: cacheURL(mountId).path, secret: secret(for: mountId))
+        return try await NdiskKit.openSession(configToml: toml, settingsToml: settingsToml(),
+                                              mountCount: UInt32(max(1, mounts().count)),
+                                              dataDir: dataURL(mountId).path, cacheDir: cacheURL(mountId).path,
+                                              secret: secret(for: mountId))
     }
 
     // MARK: 状态文件（扩展写、App 读）

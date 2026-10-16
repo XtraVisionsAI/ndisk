@@ -38,16 +38,16 @@ impl Engine {
         let content = Arc::new(ContentCache::new(
             cache_dir,
             data_dir,
-            cfg.cache.block_size,
+            cfg.cache().block_size,
             meta.clone(),
         )?);
         let prefix = match &cfg.backend {
             crate::config::BackendConfig::S3(s) => s.prefix.clone(),
             crate::config::BackendConfig::Opendal { .. } => String::new(),
         };
-        let vfs = Arc::new(Vfs::new(backend, meta, content, cfg.cache.clone(), prefix));
-        let sched = Scheduler::new(&cfg.network);
-        let writeback = Writeback::new(vfs.clone(), sched.clone(), cfg.cache.clone());
+        let vfs = Arc::new(Vfs::new(backend, meta, content, cfg.cache(), prefix));
+        let sched = Scheduler::new(&cfg.network());
+        let writeback = Writeback::new(vfs.clone(), sched.clone(), cfg.cache());
         Ok(Self {
             cfg,
             vfs,
@@ -318,7 +318,7 @@ impl Engine {
             }
             cur = (i != ItemId::ROOT).then_some(n.parent);
         }
-        Ok(self.cfg.cache.policy)
+        Ok(self.cfg.cache().policy)
     }
 
     /// 清理本地缓存（有未上传修改时拒绝）。目录递归清理所有后代。
@@ -423,7 +423,7 @@ impl Engine {
 
         let mut total = self.vfs.meta().total_cached_bytes()?;
         for item in remaining {
-            if total <= self.cfg.cache.max_bytes {
+            if total <= self.cfg.cache().max_bytes {
                 break;
             }
             self.vfs.content().evict(item.id).await?;

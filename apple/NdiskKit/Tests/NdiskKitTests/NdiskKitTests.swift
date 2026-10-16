@@ -31,7 +31,8 @@ final class NdiskKitTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let toml = try renderS3Config(spec: Self.spec(endpoint: endpoint))
-        let s = try await openSession(configToml: toml, dataDir: tmp.appendingPathComponent("data").path,
+        let s = try await openSession(configToml: toml, settingsToml: nil, mountCount: 1,
+                                      dataDir: tmp.appendingPathComponent("data").path,
                                       cacheDir: tmp.appendingPathComponent("cache").path, secret: "testsecret")
         defer { s.close() }
 
@@ -92,7 +93,6 @@ final class NdiskKitTests: XCTestCase {
         S3MountSpec(
             id: id, displayName: "Swift Test", bucket: "test", prefix: "",
             region: "us-east-1", endpoint: endpoint, forcePathStyle: true,
-            accessKeyId: "testkey", profile: nil, defaultPolicy: .ttl(seconds: 3600),
-            maxCacheBytes: nil, proxy: nil, uploadLimit: 0, downloadLimit: 0, readOnly: false)
+            auth: .static(accessKeyId: "testkey"), policyOverride: .ttl(seconds: 3600), readOnly: false)
     }
 }

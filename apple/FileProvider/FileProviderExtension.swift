@@ -14,6 +14,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     static let hotWindow: UInt64 = 15 * 60
     private var background: Task<Void, Never>?
     private var lastError: String?
+    private var fingerprint: String?
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
@@ -39,6 +40,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
 
     private func pollOnce() async {
         var changes: UInt64 = 0
+        // 配置或全局设置被 App 修改：关掉会话，下次调用时按新配置重开。
+        if let store = try? SharedStore.fromBundle() {
+            let fp = store.configFingerprint(mountId: domain.identifier.rawValue)
+            if let old = fingerprint, old != fp {
+                log.info("config changed; reopening session")
+                await holder.close()
+            }
+            fingerprint = fp
+        }
         do {
             let s = try await session()
             changes = try await s.refreshHotDirs(withinSeconds: Self.hotWindow)

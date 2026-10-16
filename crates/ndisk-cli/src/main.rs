@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ndisk_core::config::{BackendConfig, MountConfig};
+use ndisk_core::config::{BackendConfig, GlobalSettings, MountConfig};
 use ndisk_core::{Engine, ItemId, Kind};
 
 #[derive(Parser)]
@@ -24,6 +24,9 @@ struct Cli {
     /// 块缓存目录（可清理）。默认按系统惯例：Linux $XDG_CACHE_HOME/ndisk/<id>，macOS ~/Library/Caches/ndisk/<id>。
     #[arg(long, global = true)]
     cache_dir: Option<PathBuf>,
+    /// 全局设置文件（TOML）。默认读取数据目录上级的 settings.toml（存在时）。
+    #[arg(long, global = true)]
+    settings: Option<PathBuf>,
     /// 持久数据目录（元数据库、未上传文件）。默认 Linux $XDG_DATA_HOME/ndisk/<id>，macOS ~/Library/Application Support/ndisk/<id>。
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
@@ -110,6 +113,15 @@ async fn main() -> Result<()> {
     let cfg_path = cli.config.context("--config is required")?;
     let cfg = MountConfig::from_toml(&std::fs::read_to_string(&cfg_path)?)?;
     let dirs = AppDirs::resolve(&cfg.id, cli.data_dir, cli.cache_dir);
+    let settings_path = cli.settings.or_else(|| {
+        let p = dirs.data.parent()?.join("settings.toml");
+        p.exists().then_some(p)
+    });
+    let global = match settings_path {
+        Some(p) => GlobalSettings::from_toml(&std::fs::read_to_string(&p)?)?,
+        None => GlobalSettings::default(),
+    };
+    let cfg = cfg.apply(&global, 1);
     let engine = Arc::new(open_engine(&cfg, dirs).await?);
 
     match cli.cmd {
@@ -185,7 +197,8 @@ async fn main() -> Result<()> {
             println!("backend    : {}", engine.vfs.backend().name());
             println!(
                 "policy     : {:?} (max {} bytes)",
-                cfg.cache.policy, cfg.cache.max_bytes
+                cfg.cache().policy,
+                cfg.cache().max_bytes
             );
             println!(
                 "cached     : {} bytes",
@@ -231,7 +244,7 @@ async fn open_engine(cfg: &MountConfig, dirs: AppDirs) -> Result<Engine> {
             // 骨架阶段：静态密钥从环境变量 NDISK_S3_SECRET 读取；正式版走系统凭据库。
             let secret = std::env::var("NDISK_S3_SECRET").ok();
             Arc::new(
-                ndisk_backend_s3::S3Backend::connect(s3, secret, cfg.network.proxy.as_deref())
+                ndisk_backend_s3::S3Backend::connect(s3, secret, cfg.network().proxy.as_deref())
                     .await?,
             )
         }
@@ -307,8 +320,9 @@ fn template() -> Result<MountConfig> {
             dir_markers: true,
             copy_threshold: None,
         }),
-        cache: Default::default(),
-        network: Default::default(),
         read_only: false,
+        overrides: Default::default(),
+        cache: Some(Default::default()),
+        network: Some(Default::default()),
     })
 }

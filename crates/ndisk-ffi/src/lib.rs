@@ -179,9 +179,25 @@ pub struct SessionStatus {
     pub materialized_items: u64,
 }
 
-/// 菜单栏 App 添加挂载时填写的 S3 参数，由 [`render_s3_config`] 转成 TOML。
-/// 密钥不在这里，单独存入钥匙串。
-#[derive(Debug, Clone, uniffi::Record)]
+/// 凭据方式（界面选项）。密钥本体存钥匙串，这里只有非敏感部分。
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum S3AuthSpec {
+    /// aws-config 默认凭据链（环境变量、~/.aws、实例角色）。沙盒内基本不可用，供 CLI。
+    Default,
+    /// 静态 Access Key；Secret（可带 session token）存钥匙串。
+    Static { access_key_id: String },
+    /// 以静态密钥或默认链为源，AssumeRole 获取自动刷新的临时凭据。
+    AssumeRole {
+        role_arn: String,
+        external_id: Option<String>,
+        source_access_key_id: Option<String>,
+    },
+    /// 命名 profile（需要能读到 ~/.aws）。
+    Profile { name: String },
+}
+
+/// 菜单栏 App 添加 / 编辑挂载时的 S3 参数。网络与缓存参数属于全局设置，不在这里。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct S3MountSpec {
     pub id: String,
     pub display_name: String,
@@ -190,31 +206,54 @@ pub struct S3MountSpec {
     pub region: Option<String>,
     pub endpoint: Option<String>,
     pub force_path_style: bool,
-    /// 为空表示使用 aws-config 默认凭据链。
-    pub access_key_id: Option<String>,
-    pub profile: Option<String>,
-    pub default_policy: CachePolicyFfi,
-    pub max_cache_bytes: Option<u64>,
-    pub proxy: Option<String>,
-    pub upload_limit: u64,
-    pub download_limit: u64,
+    pub auth: S3AuthSpec,
+    /// 覆盖全局默认缓存策略；`None` 继承。
+    pub policy_override: Option<CachePolicyFfi>,
     pub read_only: bool,
 }
 
-// ---------------------------------------------------------------- free functions
+/// 全局设置的界面视图。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SettingsSpec {
+    pub default_policy: CachePolicyFfi,
+    pub max_cache_bytes: u64,
+    /// `""` 直连，`"env"` 系统 / 环境变量代理，或 `http://[user:pass@]host:port`。
+    pub proxy: String,
+    pub upload_limit: u64,
+    pub download_limit: u64,
+    pub log_filter: String,
+}
+
+fn secret_ref(id: &str) -> String {
+    format!("keychain:{id}")
+}
 
 /// 生成挂载配置 TOML。
 #[uniffi::export]
 pub fn render_s3_config(spec: S3MountSpec) -> Result<String> {
-    let auth = match (&spec.access_key_id, &spec.profile) {
-        (Some(ak), _) if !ak.is_empty() => S3Auth::Static {
-            access_key_id: ak.clone(),
-            secret_ref: format!("keychain:{}", spec.id),
+    let auth = match &spec.auth {
+        S3AuthSpec::Default => S3Auth::Default,
+        S3AuthSpec::Static { access_key_id } => S3Auth::Static {
+            access_key_id: access_key_id.clone(),
+            secret_ref: secret_ref(&spec.id),
         },
-        (_, Some(p)) if !p.is_empty() => S3Auth::Profile { name: p.clone() },
-        _ => S3Auth::Default,
+        S3AuthSpec::AssumeRole {
+            role_arn,
+            external_id,
+            source_access_key_id,
+        } => S3Auth::AssumeRole {
+            role_arn: role_arn.clone(),
+            session_name: Some("ndisk".into()),
+            external_id: external_id.clone().filter(|s| !s.is_empty()),
+            access_key_id: source_access_key_id.clone().filter(|s| !s.is_empty()),
+            secret_ref: source_access_key_id
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .map(|_| secret_ref(&spec.id)),
+        },
+        S3AuthSpec::Profile { name } => S3Auth::Profile { name: name.clone() },
     };
-    let mut cfg = MountConfig {
+    let cfg = MountConfig {
         id: spec.id,
         display_name: spec.display_name,
         backend: BackendConfig::S3(S3Config {
@@ -227,19 +266,94 @@ pub fn render_s3_config(spec: S3MountSpec) -> Result<String> {
             dir_markers: true,
             copy_threshold: None,
         }),
-        cache: Default::default(),
-        network: Default::default(),
         read_only: spec.read_only,
+        overrides: ndisk_core::config::MountOverrides {
+            policy: spec.policy_override.map(Into::into),
+        },
+        cache: None,
+        network: None,
     };
-    cfg.cache.policy = spec.default_policy.into();
-    if let Some(m) = spec.max_cache_bytes {
-        cfg.cache.max_bytes = m;
-    }
-    cfg.network.proxy = spec.proxy.filter(|s| !s.is_empty());
-    cfg.network.upload_limit = spec.upload_limit;
-    cfg.network.download_limit = spec.download_limit;
     cfg.validate()?;
     Ok(cfg.to_toml()?)
+}
+
+/// 解析挂载配置 TOML 为界面视图（编辑时回填）。非 S3 后端返回 Unsupported。
+#[uniffi::export]
+pub fn parse_s3_config(config_toml: String) -> Result<S3MountSpec> {
+    let cfg = MountConfig::from_toml(&config_toml)?;
+    let BackendConfig::S3(s3) = &cfg.backend else {
+        return Err(NdiskError::Unsupported {
+            message: "not an S3 mount".into(),
+        });
+    };
+    let auth = match &s3.auth {
+        S3Auth::Default | S3Auth::WebIdentity { .. } => S3AuthSpec::Default,
+        S3Auth::Static { access_key_id, .. } => S3AuthSpec::Static {
+            access_key_id: access_key_id.clone(),
+        },
+        S3Auth::AssumeRole {
+            role_arn,
+            external_id,
+            access_key_id,
+            ..
+        } => S3AuthSpec::AssumeRole {
+            role_arn: role_arn.clone(),
+            external_id: external_id.clone(),
+            source_access_key_id: access_key_id.clone(),
+        },
+        S3Auth::Profile { name } | S3Auth::Sso { profile: name } => {
+            S3AuthSpec::Profile { name: name.clone() }
+        }
+    };
+    Ok(S3MountSpec {
+        id: cfg.id.clone(),
+        display_name: cfg.display_name.clone(),
+        bucket: s3.bucket.clone(),
+        prefix: s3.prefix.clone(),
+        region: s3.region.clone(),
+        endpoint: s3.endpoint.clone(),
+        force_path_style: s3.force_path_style,
+        auth,
+        policy_override: cfg.overrides.policy.map(Into::into),
+        read_only: cfg.read_only,
+    })
+}
+
+#[uniffi::export]
+pub fn default_settings() -> SettingsSpec {
+    settings_to_spec(&ndisk_core::config::GlobalSettings::default())
+}
+
+#[uniffi::export]
+pub fn render_settings(spec: SettingsSpec) -> Result<String> {
+    let mut g = ndisk_core::config::GlobalSettings::default();
+    g.cache.policy = spec.default_policy.into();
+    g.cache.max_bytes = spec.max_cache_bytes;
+    g.network.proxy = Some(spec.proxy.trim().to_string()).filter(|s| !s.is_empty());
+    g.network.upload_limit = spec.upload_limit;
+    g.network.download_limit = spec.download_limit;
+    if !spec.log_filter.trim().is_empty() {
+        g.log_filter = spec.log_filter.trim().to_string();
+    }
+    Ok(g.to_toml()?)
+}
+
+#[uniffi::export]
+pub fn parse_settings(settings_toml: String) -> Result<SettingsSpec> {
+    Ok(settings_to_spec(
+        &ndisk_core::config::GlobalSettings::from_toml(&settings_toml)?,
+    ))
+}
+
+fn settings_to_spec(g: &ndisk_core::config::GlobalSettings) -> SettingsSpec {
+    SettingsSpec {
+        default_policy: g.cache.policy.into(),
+        max_cache_bytes: g.cache.max_bytes,
+        proxy: g.network.proxy.clone().unwrap_or_default(),
+        upload_limit: g.network.upload_limit,
+        download_limit: g.network.download_limit,
+        log_filter: g.log_filter.clone(),
+    }
 }
 
 /// 初始化日志（进程内只生效一次）。`filter` 形如 `info,ndisk_core=debug`。
@@ -259,16 +373,27 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// 打开一个挂载会话。`data_dir` 放元数据库与未上传文件（持久），`cache_dir` 放块缓存（可清理）。
+/// 打开一个挂载会话。`settings_toml` 为全局设置（可空），`mount_count` 用于分摊全局缓存容量；
+/// `data_dir` 放元数据库与未上传文件（持久），`cache_dir` 放块缓存（可清理）。
 /// `secret` 为钥匙串中的密钥：纯 Secret Access Key，或含 session_token 的 JSON。
 #[uniffi::export]
 pub async fn open_session(
     config_toml: String,
+    settings_toml: Option<String>,
+    mount_count: u32,
     data_dir: String,
     cache_dir: String,
     secret: Option<String>,
 ) -> Result<Arc<Session>> {
-    let cfg = MountConfig::from_toml(&config_toml)?;
+    let global = match settings_toml
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(t) => ndisk_core::config::GlobalSettings::from_toml(t)?,
+        None => ndisk_core::config::GlobalSettings::default(),
+    };
+    let cfg = MountConfig::from_toml(&config_toml)?.apply(&global, mount_count);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .thread_name("ndisk-rt")
@@ -283,8 +408,12 @@ pub async fn open_session(
         .spawn(async move {
             let backend: Arc<dyn ndisk_core::Backend> = match &cfg.backend {
                 BackendConfig::S3(s3) => Arc::new(
-                    ndisk_backend_s3::S3Backend::connect(s3, secret, cfg.network.proxy.as_deref())
-                        .await?,
+                    ndisk_backend_s3::S3Backend::connect(
+                        s3,
+                        secret,
+                        cfg.network().proxy.as_deref(),
+                    )
+                    .await?,
                 ),
                 BackendConfig::Opendal { scheme, .. } => {
                     return Err(ndisk_core::Error::Config(format!(
@@ -645,9 +774,8 @@ fn to_info(n: Node, pending_upload: bool, policy: CachePolicy) -> ItemInfo {
 mod tests {
     use super::*;
 
-    #[test]
-    fn render_config_roundtrip() {
-        let toml = render_s3_config(S3MountSpec {
+    fn spec() -> S3MountSpec {
+        S3MountSpec {
             id: "m1".into(),
             display_name: "My Bucket".into(),
             bucket: "b".into(),
@@ -655,29 +783,44 @@ mod tests {
             region: Some("us-east-1".into()),
             endpoint: Some("http://127.0.0.1:7070".into()),
             force_path_style: true,
-            access_key_id: Some("AK".into()),
-            profile: None,
-            default_policy: CachePolicyFfi::Ttl { seconds: 3600 },
-            max_cache_bytes: Some(1 << 30),
-            proxy: None,
-            upload_limit: 0,
-            download_limit: 0,
+            auth: S3AuthSpec::Static {
+                access_key_id: "AK".into(),
+            },
+            policy_override: Some(CachePolicyFfi::Ttl { seconds: 3600 }),
             read_only: false,
-        })
-        .unwrap();
-        let cfg = MountConfig::from_toml(&toml).unwrap();
-        assert_eq!(
-            cfg.cache.policy,
-            CachePolicy::Ttl(Duration::from_secs(3600))
-        );
-        match cfg.backend {
-            BackendConfig::S3(s) => {
-                assert!(
-                    matches!(s.auth, S3Auth::Static { ref secret_ref, .. } if secret_ref == "keychain:m1")
-                );
-                assert!(s.force_path_style);
-            }
-            _ => panic!(),
         }
+    }
+
+    #[test]
+    fn render_parse_roundtrip() {
+        let toml = render_s3_config(spec()).unwrap();
+        assert!(toml.contains("secret_ref = \"keychain:m1\""));
+        assert!(
+            !toml.contains("[cache]"),
+            "network/cache belong to global settings"
+        );
+        assert_eq!(parse_s3_config(toml).unwrap(), spec());
+        let mut a = spec();
+        a.auth = S3AuthSpec::AssumeRole {
+            role_arn: "arn:aws:iam::1:role/r".into(),
+            external_id: None,
+            source_access_key_id: Some("AK".into()),
+        };
+        a.policy_override = None;
+        assert_eq!(
+            parse_s3_config(render_s3_config(a.clone()).unwrap()).unwrap(),
+            a
+        );
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let mut s = default_settings();
+        s.proxy = "http://127.0.0.1:3128".into();
+        s.max_cache_bytes = 5 << 30;
+        assert_eq!(
+            parse_settings(render_settings(s.clone()).unwrap()).unwrap(),
+            s
+        );
     }
 }

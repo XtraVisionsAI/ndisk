@@ -13,7 +13,23 @@ struct NDiskApp: App {
         .menuBarExtraStyle(.window)
 
         Window("添加挂载", id: "add-mount") {
-            AddMountView(model: delegate.model)
+            MountFormView(model: delegate.model)
+        }
+        .windowResizability(.contentSize)
+
+        // 编辑窗口按挂载 id 打开。
+        WindowGroup("编辑挂载", id: "edit-mount", for: String.self) { $mountId in
+            if let id = mountId, let m = delegate.model.mounts.first(where: { $0.id == id }),
+               let spec = delegate.model.existingSpec(m) {
+                MountFormView(model: delegate.model, existing: spec)
+            } else {
+                Text("找不到该挂载").padding()
+            }
+        }
+        .windowResizability(.contentSize)
+
+        Window("NDisk 设置", id: "settings") {
+            SettingsView(model: delegate.model)
         }
         .windowResizability(.contentSize)
     }
@@ -48,15 +64,24 @@ struct MenuContent: View {
                 Text("尚未添加挂载").foregroundStyle(.secondary)
             }
             ForEach(model.mounts) { m in
+                let off = model.disconnected.contains(m.id)
                 HStack {
-                    Image(systemName: "externaldrive")
+                    Image(systemName: off ? "externaldrive.badge.xmark" : "externaldrive")
+                        .foregroundStyle(off ? .secondary : .primary)
                     VStack(alignment: .leading) {
                         Text(m.displayName)
-                        Text(statusLine(m)).font(.caption).foregroundStyle(.secondary)
+                        Text(off ? "已断开" : statusLine(m)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button { model.reveal(m) } label: { Image(systemName: "folder") }
-                        .help("在 Finder 中打开")
+                        .help("在 Finder 中打开").disabled(off)
+                    Button {
+                        openWindow(id: "edit-mount", value: m.id)
+                        NSApp.activate(ignoringOtherApps: true)
+                    } label: { Image(systemName: "pencil") }
+                        .help("编辑")
+                    Button { model.toggleConnection(m) } label: { Image(systemName: off ? "play.circle" : "eject") }
+                        .help(off ? "连接" : "断开（保留配置与缓存）")
                     Button { model.remove(m) } label: { Image(systemName: "trash") }
                         .help("移除挂载")
                 }
@@ -71,12 +96,17 @@ struct MenuContent: View {
                     openWindow(id: "add-mount")
                     NSApp.activate(ignoringOtherApps: true)
                 }
+                Button("设置…") {
+                    openWindow(id: "settings")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }
+                    .help("只退出菜单栏程序；挂载由系统继续提供，不受影响")
             }
         }
         .padding(12)
-        .frame(width: 320)
+        .frame(width: 360)
         .onAppear { model.refreshStatuses() }
     }
 

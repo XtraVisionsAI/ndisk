@@ -11,6 +11,7 @@
 | 议题 | 决策 |
 |---|---|
 | macOS 呈现方式 | File Provider（Finder 侧栏位置，路径 `~/Library/CloudStorage/<Domain>`），不做 macFUSE；最低 macOS 13（见 4.1） |
+| 目录布局 | 遵循系统惯例：持久数据（元数据库、未上传文件、配置）在 Application Support / `$XDG_DATA_HOME` / `%APPDATA%`，可重建的块缓存在 Caches / `$XDG_CACHE_HOME` / `%LOCALAPPDATA%`；不开放自定义 |
 | 签名与分发 | Developer ID / App Store，File Provider entitlement 后续提供 |
 | 用户形态 | 个人单机使用，不做多人协同锁 |
 | 首期后端 | S3，兼容 MinIO / R2 / OSS 等 S3 兼容接口；认证支持 AK/SK、Profile、环境变量、STS AssumeRole、SSO、Web Identity |
@@ -195,6 +196,14 @@ pub trait Backend: Send + Sync {
 **冲突**：上传时 If-Match 失败（远端在编辑期间被改）→ 本地内容另存为 `name (conflicted copy YYYY-MM-DD HH-MM-SS).ext` 并上传，原条目回到远端版本。
 
 **App 状态展示**：扩展每个轮询周期把缓存占用、待上传数、已下载数、最近错误写入 App Group 容器的 `status/<id>.json`，菜单栏 App 打开时读取。不走 XPC，避免沙盒 App 需要访问 CloudStorage 路径。
+
+**配置模型**（2026-10-16 调整）：
+
+- 全局设置 `settings.toml`（App Group 的 `Library/Application Support/ndisk/`）：默认缓存策略、缓存总上限（按挂载数分摊）、代理、上传 / 下载限速、并发、日志级别。
+- 挂载配置只含后端、凭据引用、只读，以及对默认策略的可选覆盖。Bucket / 前缀 / Endpoint 创建后不可改（等同换存储），其余可编辑；App 保存后扩展在下个轮询周期检测到文件变化即重开会话，显示名变化通过同 id 再次 `add(domain)` 更新。
+- 断开 / 连接：`NSFileProviderManager.disconnect/reconnect`，位置保留，不走网络；"退出"只退出菜单栏程序，挂载由系统继续提供。
+- 服务商预设（Amazon S3、阿里云 OSS、腾讯云 COS、Cloudflare R2、MinIO、自定义）决定 Endpoint 格式；自定义 endpoint 先试虚拟主机式，连接失败自动退回路径式；目录标记与复制阈值不出现在界面。
+- 凭据：Access Key（可带 Session Token，与 Secret 一起以 JSON 存钥匙串）、AssumeRole（SDK 自动刷新，可指定源密钥）、命名 Profile（沙盒内暂不可用）、默认凭据链（CLI）。
 
 **待办**：
 

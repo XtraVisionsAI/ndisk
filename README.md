@@ -50,6 +50,8 @@ NDISK_TEAM_ID = <你的 Team ID>
 NDISK_BUNDLE_PREFIX = ai.xtravisions.ndisk
 ```
 
+全局设置（代理、限速、缓存上限、默认策略）在菜单栏"设置…"中；每个挂载可编辑显示名、凭据、策略覆盖与只读，可断开 / 连接而不删除配置。
+
 ## 缓存控制
 
 ```sh

@@ -8,6 +8,46 @@ use serde::{Deserialize, Serialize};
 use crate::types::CachePolicy;
 use crate::{Error, Result};
 
+/// 全局设置：对所有挂载生效的缓存与网络参数。平台层存一份 `settings.toml`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalSettings {
+    #[serde(default)]
+    pub cache: CacheConfig,
+    #[serde(default)]
+    pub network: NetworkConfig,
+    /// tracing 过滤器，如 `info,ndisk_core=debug`。
+    #[serde(default = "default_log_filter")]
+    pub log_filter: String,
+}
+
+impl Default for GlobalSettings {
+    fn default() -> Self {
+        Self {
+            cache: CacheConfig::default(),
+            network: NetworkConfig::default(),
+            log_filter: default_log_filter(),
+        }
+    }
+}
+
+impl GlobalSettings {
+    pub fn from_toml(s: &str) -> Result<Self> {
+        toml::from_str(s).map_err(|e| Error::Config(e.to_string()))
+    }
+
+    pub fn to_toml(&self) -> Result<String> {
+        toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))
+    }
+}
+
+/// 挂载对全局设置的少量覆盖。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MountOverrides {
+    /// 该挂载的默认缓存策略；`None` 用全局。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<CachePolicy>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MountConfig {
     /// 挂载点唯一 id，用作缓存目录名与 File Provider domain id。
@@ -15,11 +55,23 @@ pub struct MountConfig {
     pub display_name: String,
     pub backend: BackendConfig,
     #[serde(default)]
-    pub cache: CacheConfig,
-    #[serde(default)]
-    pub network: NetworkConfig,
-    #[serde(default)]
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "is_default_overrides")]
+    pub overrides: MountOverrides,
+    /// 生效的缓存配置。文件里一般不写，由 [`MountConfig::apply`] 从全局设置填充；
+    /// 直接写在挂载文件里时（CLI 单文件用法）作为完整覆盖。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkConfig>,
+}
+
+fn is_default_overrides(o: &MountOverrides) -> bool {
+    *o == MountOverrides::default()
+}
+
+fn default_log_filter() -> String {
+    "info,aws_config=warn,aws_smithy_runtime=warn".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,13 +216,41 @@ impl MountConfig {
         toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))
     }
 
+    /// 用全局设置填充未在挂载文件中写明的部分，并套用挂载级覆盖。
+    /// `share` 为同时存在的挂载数，用来分摊全局缓存容量上限。
+    pub fn apply(mut self, global: &GlobalSettings, share: u32) -> Self {
+        if self.cache.is_none() {
+            let mut cache = global.cache.clone();
+            cache.max_bytes = global.cache.max_bytes / u64::from(share.max(1));
+            self.cache = Some(cache);
+        }
+        if self.network.is_none() {
+            self.network = Some(global.network.clone());
+        }
+        self
+    }
+
+    /// 生效的缓存配置（含挂载级覆盖）。未 `apply` 时基于默认值。
+    pub fn cache(&self) -> CacheConfig {
+        let mut c = self.cache.clone().unwrap_or_default();
+        if let Some(p) = self.overrides.policy {
+            c.policy = p;
+        }
+        c
+    }
+
+    pub fn network(&self) -> NetworkConfig {
+        self.network.clone().unwrap_or_default()
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.id.is_empty() || self.id.contains(['/', '\\']) {
             return Err(Error::Config(
                 "mount id must be non-empty and contain no slashes".into(),
             ));
         }
-        if self.cache.block_size == 0 || self.cache.part_size < 5 * 1024 * 1024 {
+        let c = self.cache();
+        if c.block_size == 0 || c.part_size < 5 * 1024 * 1024 {
             return Err(Error::Config(
                 "block_size must be >0 and part_size >= 5 MiB".into(),
             ));

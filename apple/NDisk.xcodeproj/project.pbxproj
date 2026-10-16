@@ -8,13 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		1B0DE00398179A8A5E6F7038 /* NDiskApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8794B057EC839A67B928A5B /* NDiskApp.swift */; };
+		1FCDF41B8D6CF8BD65F490C8 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426405073ECE94CC13D4D21E /* SettingsView.swift */; };
 		263A9CC15F4AB9700EDF14B5 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C21F9AFAF99751F2E66B50 /* FileProviderExtension.swift */; };
 		47D0B8ABF44F9FBA2FCAEFAE /* NDiskFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		4905C602D8FAFDA1DBD06830 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */; };
 		6B3E650EE7EFD539F8402030 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 75A0D1C83F997E594D0C5ED4 /* NdiskKit */; };
-		794090EF6CAB89E2256DEEC1 /* AddMountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628D9507BC069575CAB86100 /* AddMountView.swift */; };
 		7AD8CFE04A40A5BAADF2E9CA /* MountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFA7A63883209936D438B34 /* MountsModel.swift */; };
 		7F1C760E013E474D5B9A3C6D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93B1DD5CA23D03297A119BC1 /* Assets.xcassets */; };
+		9CB735371B10BF0E2486E6C3 /* MountFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F0E303B09E3AE0A85D8955E /* MountFormView.swift */; };
 		DDED06EDC0DD0D0C5EE7C909 /* PinnedBadge.icns in Resources */ = {isa = PBXBuildFile; fileRef = CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */; };
 		EE272EBD480766DED360DCE9 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B88564D1C72681750AFF99 /* FileProviderItem.swift */; };
 		FFC3BA23E5CBF128403D781A /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */; };
@@ -45,9 +46,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1F0E303B09E3AE0A85D8955E /* MountFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountFormView.swift; sourceTree = "<group>"; };
 		21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
+		426405073ECE94CC13D4D21E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5AF44CD52A30F3F8C5619594 /* NDisk.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = NDisk.xcconfig; sourceTree = "<group>"; };
-		628D9507BC069575CAB86100 /* AddMountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddMountView.swift; sourceTree = "<group>"; };
 		6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NDiskFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6E772CE1E3EADD76A3797810 /* NdiskKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = NdiskKit; path = NdiskKit; sourceTree = SOURCE_ROOT; };
 		93B1DD5CA23D03297A119BC1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -82,10 +84,11 @@
 		216527CCF7D30F776758FC32 /* App */ = {
 			isa = PBXGroup;
 			children = (
-				628D9507BC069575CAB86100 /* AddMountView.swift */,
 				93B1DD5CA23D03297A119BC1 /* Assets.xcassets */,
+				1F0E303B09E3AE0A85D8955E /* MountFormView.swift */,
 				ADFA7A63883209936D438B34 /* MountsModel.swift */,
 				D8794B057EC839A67B928A5B /* NDiskApp.swift */,
+				426405073ECE94CC13D4D21E /* SettingsView.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -256,9 +259,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				794090EF6CAB89E2256DEEC1 /* AddMountView.swift in Sources */,
+				9CB735371B10BF0E2486E6C3 /* MountFormView.swift in Sources */,
 				7AD8CFE04A40A5BAADF2E9CA /* MountsModel.swift in Sources */,
 				1B0DE00398179A8A5E6F7038 /* NDiskApp.swift in Sources */,
+				1FCDF41B8D6CF8BD65F490C8 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
