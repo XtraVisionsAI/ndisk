@@ -6,10 +6,13 @@ import UniformTypeIdentifiers
 final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDecorating {
     let info: ItemInfo
     private let pinnedDecoration: NSFileProviderItemDecorationIdentifier
+    /// 根条目也必须有非空文件名（系统断言），用 domain 的显示名。
+    private let rootName: String
 
-    init(_ info: ItemInfo, pinnedDecoration: NSFileProviderItemDecorationIdentifier) {
+    init(_ info: ItemInfo, pinnedDecoration: NSFileProviderItemDecorationIdentifier, rootName: String) {
         self.info = info
         self.pinnedDecoration = pinnedDecoration
+        self.rootName = rootName
     }
 
     var isPinned: Bool { info.effectivePolicy == .always }
@@ -20,7 +23,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem, NSFileProviderItemDe
         info.id == NdiskIdentifier.rootId ? .rootContainer : NdiskIdentifier.identifier(info.parent)
     }
 
-    var filename: String { info.id == NdiskIdentifier.rootId ? "" : info.name }
+    var filename: String { info.id == NdiskIdentifier.rootId ? rootName : info.name }
 
     var contentType: UTType {
         if info.kind == .directory { return .folder }

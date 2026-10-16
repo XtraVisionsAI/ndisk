@@ -42,6 +42,7 @@ apple/scripts/build-app.sh --unsigned           # 不签名编译 App 与扩展
 open apple/NDisk.xcodeproj                      # 或在 Xcode 中构建运行（scheme 预操作会先构建 Rust）
 ```
 
+运行时 App 必须位于 `/Applications` 或 `~/Applications`，且首次需在"系统设置 → 通用 → 登录项与扩展 → 文件提供程序"中启用 NDisk。
 签名运行前，在 `apple/Config/Signing.local.xcconfig` 中填写：
 
 ```

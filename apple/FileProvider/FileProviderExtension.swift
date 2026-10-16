@@ -32,7 +32,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     }
 
     func makeItem(_ info: ItemInfo) -> FileProviderItem {
-        FileProviderItem(info, pinnedDecoration: pinnedDecoration)
+        let rootName = domain.displayName.isEmpty ? "NDisk" : domain.displayName
+        return FileProviderItem(info, pinnedDecoration: pinnedDecoration, rootName: rootName)
     }
 
     private var manager: NSFileProviderManager? { NSFileProviderManager(for: domain) }
