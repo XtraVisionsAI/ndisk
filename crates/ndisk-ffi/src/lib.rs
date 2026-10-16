@@ -357,14 +357,29 @@ fn settings_to_spec(g: &ndisk_core::config::GlobalSettings) -> SettingsSpec {
 }
 
 /// 初始化日志（进程内只生效一次）。`filter` 形如 `info,ndisk_core=debug`。
+/// Apple 平台输出到统一日志（subsystem `ai.xtravisions.ndisk`，category `core`），
+/// 可用 `log show --predicate 'subsystem == "ai.xtravisions.ndisk"'` 查看；其他平台输出到 stderr。
 #[uniffi::export]
 pub fn init_logging(filter: String) {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
-            .with_ansi(false)
-            .try_init();
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        let env = tracing_subscriber::EnvFilter::new(filter);
+        #[cfg(target_vendor = "apple")]
+        {
+            let _ = tracing_subscriber::registry()
+                .with(env)
+                .with(tracing_oslog::OsLogger::new("ai.xtravisions.ndisk", "core"))
+                .try_init();
+        }
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            let _ = tracing_subscriber::registry()
+                .with(env)
+                .with(tracing_subscriber::fmt::layer().with_ansi(false))
+                .try_init();
+        }
     });
 }
 

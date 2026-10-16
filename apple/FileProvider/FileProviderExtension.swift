@@ -44,7 +44,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         if let store = try? SharedStore.fromBundle() {
             let fp = store.configFingerprint(mountId: domain.identifier.rawValue)
             if let old = fingerprint, old != fp {
-                log.info("config changed; reopening session")
+                log.notice("config changed; reopening session")
                 await holder.close()
             }
             fingerprint = fp
@@ -54,7 +54,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             changes = try await s.refreshHotDirs(withinSeconds: Self.hotWindow)
             if changes > 0 {
                 try await manager?.signalEnumerator(for: .workingSet)
-                log.info("remote changes discovered: \(changes)")
+                log.notice("remote changes discovered: \(changes)")
             }
             lastError = nil
         } catch {
@@ -243,7 +243,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             do {
                 try await manager.evictItem(identifier: NdiskIdentifier.identifier(id))
                 try s.markEvicted(id: id)
-                log.info("evicted item \(id) (ttl expired)")
+                log.notice("evicted item \(id) (ttl expired)")
             } catch {
                 log.error("evict \(id) failed: \(String(describing: error), privacy: .public)")
             }
