@@ -1,4 +1,5 @@
 import AppKit
+import NdiskKit
 import SwiftUI
 
 @main
@@ -51,7 +52,7 @@ struct MenuContent: View {
                     Image(systemName: "externaldrive")
                     VStack(alignment: .leading) {
                         Text(m.displayName)
-                        Text(m.id).font(.caption).foregroundStyle(.secondary)
+                        Text(statusLine(m)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button { model.reveal(m) } label: { Image(systemName: "folder") }
@@ -76,5 +77,15 @@ struct MenuContent: View {
         }
         .padding(12)
         .frame(width: 320)
+        .onAppear { model.refreshStatuses() }
+    }
+
+    private func statusLine(_ m: SharedStore.Mount) -> String {
+        guard let st = model.statuses[m.id] else { return "尚未同步" }
+        var parts = [ByteCountFormatter.string(fromByteCount: Int64(st.cachedBytes), countStyle: .file) + " 缓存"]
+        if st.pendingUploads > 0 { parts.append("\(st.pendingUploads) 个待上传") }
+        parts.append("\(st.materializedItems) 个已下载")
+        if let err = st.lastError { parts.append("错误：\(err)") }
+        return parts.joined(separator: " · ")
     }
 }

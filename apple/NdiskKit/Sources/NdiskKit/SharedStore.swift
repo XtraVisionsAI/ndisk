@@ -71,6 +71,7 @@ public struct SharedStore: Sendable {
         try JSONEncoder().encode(all).write(to: mountsFile, options: .atomic)
         try? FileManager.default.removeItem(at: configURL(mountId))
         try? FileManager.default.removeItem(at: cacheURL(mountId))
+        try? FileManager.default.removeItem(at: statusURL(mountId))
         deleteSecret(for: mountId)
     }
 
@@ -79,6 +80,40 @@ public struct SharedStore: Sendable {
         let toml = try String(contentsOf: configURL(mountId), encoding: .utf8)
         try FileManager.default.createDirectory(at: cacheURL(mountId), withIntermediateDirectories: true)
         return try await NdiskKit.openSession(configToml: toml, cacheRoot: cacheURL(mountId).path, secret: secret(for: mountId))
+    }
+
+    // MARK: 状态文件（扩展写、App 读）
+
+    /// 扩展周期性写出的运行状态，App 菜单据此展示。
+    public struct MountStatus: Codable, Sendable {
+        public var mountId: String
+        public var backend: String
+        public var cachedBytes: UInt64
+        public var pendingUploads: UInt64
+        public var materializedItems: UInt64
+        public var lastRefreshChanges: UInt64
+        public var lastError: String?
+        public var updatedAt: Date
+        public init(mountId: String, backend: String, cachedBytes: UInt64, pendingUploads: UInt64,
+                    materializedItems: UInt64, lastRefreshChanges: UInt64, lastError: String?, updatedAt: Date) {
+            self.mountId = mountId; self.backend = backend; self.cachedBytes = cachedBytes
+            self.pendingUploads = pendingUploads; self.materializedItems = materializedItems
+            self.lastRefreshChanges = lastRefreshChanges; self.lastError = lastError; self.updatedAt = updatedAt
+        }
+    }
+
+    public func statusURL(_ id: String) -> URL { root.appendingPathComponent("status/\(id).json") }
+
+    public func writeStatus(_ st: MountStatus) throws {
+        try FileManager.default.createDirectory(at: statusURL(st.mountId).deletingLastPathComponent(), withIntermediateDirectories: true)
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        try enc.encode(st).write(to: statusURL(st.mountId), options: .atomic)
+    }
+
+    public func readStatus(_ id: String) -> MountStatus? {
+        guard let data = try? Data(contentsOf: statusURL(id)) else { return nil }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return try? dec.decode(MountStatus.self, from: data)
     }
 
     // MARK: 钥匙串

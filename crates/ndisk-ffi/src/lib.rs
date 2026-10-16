@@ -560,6 +560,17 @@ impl Session {
         })
     }
 
+    /// 刷新最近 `within_seconds` 内被用户看过的目录，发现远端变更。返回新变更条数；
+    /// 大于 0 时 Swift 侧应 `signalEnumerator(.workingSet)`。
+    pub async fn refresh_hot_dirs(&self, within_seconds: u64) -> Result<u64> {
+        let e = self.engine.clone();
+        self.run(async move {
+            e.refresh_hot_dirs(Duration::from_secs(within_seconds))
+                .await
+        })
+        .await
+    }
+
     // ---- 系统持有副本（File Provider 已下载集合）----
 
     /// `materializedItemsDidChange` 后由 Swift 传入系统当前的完整已下载集合。

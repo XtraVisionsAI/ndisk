@@ -182,8 +182,53 @@ impl Engine {
     pub async fn import_and_upload(&self, id: ItemId, src: &std::path::Path) -> Result<Node> {
         self.ensure_writable()?;
         self.writeback.import(id, src).await?;
-        self.writeback.flush(id).await?;
-        self.stat(id)
+        match self.writeback.flush(id).await {
+            Ok(_) => self.stat(id),
+            Err(Error::Conflict { .. }) => {
+                self.resolve_conflict(id).await?;
+                self.stat(id)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 远端在我们编辑期间被修改：本地内容另存为同目录下的冲突副本并上传，原条目改为远端最新版本。
+    /// 返回冲突副本节点。
+    pub async fn resolve_conflict(&self, id: ItemId) -> Result<Node> {
+        let n = self.vfs.get(id)?;
+        let dirty = self.vfs.content().dirty_path(id);
+        let copy_name = conflict_name(&n.name, SystemTime::now());
+        let copy = self.vfs.create_file(n.parent, &copy_name).await?;
+        {
+            let _guard = self.writeback.lock(copy.id).await;
+            tokio::fs::copy(&dirty, self.vfs.content().dirty_path(copy.id)).await?;
+        }
+        // 原条目：丢弃本地修改，回到远端版本。
+        self.vfs.meta().upload_remove(id)?;
+        self.vfs.content().remove_dirty(id).await?;
+        self.vfs.content().evict(id).await?;
+        if let Some(e) = self.vfs.backend().stat(&n.remote_key).await? {
+            self.vfs.meta().upsert(n.parent, &n.name, &e, &e.key)?;
+        }
+        // 冲突副本：新对象，不带 If-Match。
+        self.writeback.enqueue(copy.id).await?;
+        self.writeback.flush(copy.id).await?;
+        tracing::warn!(item = id.0, copy = %copy_name, "remote changed during edit; saved local version as conflicted copy");
+        self.vfs.get(copy.id)
+    }
+
+    /// 刷新最近 `within` 内被列举过的目录，发现远端变更。返回新产生的变更条数。
+    pub async fn refresh_hot_dirs(&self, within: Duration) -> Result<u64> {
+        let since = SystemTime::now()
+            .checked_sub(within)
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let before = self.vfs.meta().latest_anchor()?;
+        for dir in self.vfs.meta().recently_listed_dirs(since)? {
+            if let Err(e) = self.vfs.list(dir, true).await {
+                tracing::warn!(dir = dir.0, error = %e, "refresh failed");
+            }
+        }
+        Ok(self.vfs.meta().latest_anchor()?.0 - before.0)
     }
 
     /// 系统持有副本的平台：TTL 已到期、应当请求系统驱逐的文件。
@@ -401,6 +446,33 @@ impl Engine {
             }
         }
         Ok(())
+    }
+}
+
+/// 冲突副本命名：`report.txt` → `report (conflicted copy 2026-10-16 21-40-05).txt`。
+pub fn conflict_name(name: &str, at: SystemTime) -> String {
+    let secs = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // 本地时间需要 tz 库；文件名用 UTC 足够，且无额外依赖。
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    let (h, m, s) = (rem / 3600, rem % 3600 / 60, rem % 60);
+    // 民用日历换算（Howard Hinnant 算法）
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    let stamp = format!("{y:04}-{mo:02}-{d:02} {h:02}-{m:02}-{s:02}");
+    match name.rfind('.') {
+        Some(i) if i > 0 => format!("{} (conflicted copy {stamp}){}", &name[..i], &name[i..]),
+        _ => format!("{name} (conflicted copy {stamp})"),
     }
 }
 

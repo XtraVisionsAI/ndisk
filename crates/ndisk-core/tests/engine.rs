@@ -593,7 +593,10 @@ async fn system_owned_copies_export_import_and_ttl_candidates() {
     assert!(e.eviction_candidates(now).unwrap().is_empty());
     assert_eq!(e.eviction_candidates(now + 2 * H).unwrap(), vec![f]);
     // 系统上报的集合会包含根容器与目录：它们不能成为驱逐候选
-    e.vfs.meta().sync_materialized(&[ItemId::ROOT, k, f, g]).unwrap();
+    e.vfs
+        .meta()
+        .sync_materialized(&[ItemId::ROOT, k, f, g])
+        .unwrap();
     assert_eq!(e.eviction_candidates(now + 2 * H).unwrap(), vec![f]);
     // 系统报告的集合中没有 f（已被系统驱逐）
     e.vfs.meta().sync_materialized(&[g]).unwrap();
@@ -611,4 +614,111 @@ async fn system_owned_copies_export_import_and_ttl_candidates() {
     let out2 = d.path.join("export/f2.bin");
     e.export_to(f, &out2, false).await.unwrap();
     assert_eq!(std::fs::read(&out2).unwrap(), b"replaced");
+}
+
+#[tokio::test]
+async fn conflict_creates_conflicted_copy_and_keeps_remote() {
+    let mem = Arc::new(Mem::default());
+    mem.put(
+        "data/doc.txt",
+        Bytes::from_static(b"v1"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let (e, d) = setup_with(mem.clone(), config_with(1024, CachePolicy::Ttl(H), 1 << 40));
+    let id = resolve(&e, "doc.txt").await;
+    // 别处把远端改成 v2
+    mem.put(
+        "data/doc.txt",
+        Bytes::from_static(b"v2-remote"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    // 我们基于 v1 的本地编辑上传 → If-Match 不匹配 → 冲突
+    let src = d.path.join("local.txt");
+    std::fs::write(&src, b"v2-local").unwrap();
+    let n = e.import_and_upload(id, &src).await.unwrap();
+    assert_eq!(n.id, id);
+    assert_eq!(n.size, 9, "original item now reflects the remote version");
+    assert_eq!(&e.read(id, 0..9).await.unwrap()[..], b"v2-remote");
+    let children = e.vfs.list(ItemId::ROOT, false).await.unwrap();
+    let copy = children
+        .iter()
+        .find(|c| c.name.starts_with("doc (conflicted copy ") && c.name.ends_with(").txt"))
+        .expect("conflicted copy exists");
+    assert_eq!(
+        &mem.objects.lock().unwrap()[&copy.remote_key].0[..],
+        b"v2-local"
+    );
+    assert_eq!(
+        &mem.objects.lock().unwrap()["data/doc.txt"].0[..],
+        b"v2-remote"
+    );
+    assert!(e.vfs.meta().uploads_pending().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn refresh_hot_dirs_discovers_remote_changes() {
+    let mem = Arc::new(Mem::default());
+    mem.put("data/a/x.txt", Bytes::from_static(b"x"), Default::default())
+        .await
+        .unwrap();
+    mem.put("data/b/y.txt", Bytes::from_static(b"y"), Default::default())
+        .await
+        .unwrap();
+    let (e, _d) = setup_with(mem.clone(), config_with(1024, CachePolicy::Ttl(H), 1 << 40));
+    let a = resolve(&e, "a").await;
+    e.vfs.list(a, false).await.unwrap(); // a 是热目录；b 只被 lookup 过，未列举
+    let _b = resolve(&e, "b").await;
+    mem.put(
+        "data/a/new.txt",
+        Bytes::from_static(b"n"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    mem.put(
+        "data/b/new.txt",
+        Bytes::from_static(b"n"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let changes = e
+        .refresh_hot_dirs(std::time::Duration::from_secs(600))
+        .await
+        .unwrap();
+    assert!(changes >= 1, "a/new.txt discovered");
+    assert!(e.vfs.meta().lookup(a, "new.txt").unwrap().is_some());
+    let b = resolve(&e, "b").await;
+    assert!(
+        e.vfs.meta().lookup(b, "new.txt").unwrap().is_none(),
+        "cold dir b not refreshed"
+    );
+    assert_eq!(
+        e.refresh_hot_dirs(std::time::Duration::from_secs(600))
+            .await
+            .unwrap(),
+        0,
+        "no spurious changes"
+    );
+}
+
+#[test]
+fn conflict_name_format() {
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_792_157_405); // 2026-10-16 13:30:05 UTC
+    assert_eq!(
+        ndisk_core::engine::conflict_name("report.txt", t),
+        "report (conflicted copy 2026-10-16 13-30-05).txt"
+    );
+    assert_eq!(
+        ndisk_core::engine::conflict_name("README", t),
+        "README (conflicted copy 2026-10-16 13-30-05)"
+    );
+    assert_eq!(
+        ndisk_core::engine::conflict_name(".env", t),
+        ".env (conflicted copy 2026-10-16 13-30-05)"
+    );
 }

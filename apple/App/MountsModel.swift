@@ -11,6 +11,7 @@ import os
 @MainActor
 final class MountsModel: ObservableObject {
     @Published private(set) var mounts: [SharedStore.Mount] = []
+    @Published private(set) var statuses: [String: SharedStore.MountStatus] = [:]
     @Published var lastError: String?
 
     let coreVersion = NdiskKit.coreVersion()
@@ -123,6 +124,14 @@ final class MountsModel: ObservableObject {
         default:
             lastError = "未知 URL：\(url)"
         }
+    }
+
+    /// 菜单打开时调用：读取扩展写出的状态文件。
+    func refreshStatuses() {
+        guard let store else { return }
+        var out: [String: SharedStore.MountStatus] = [:]
+        for m in mounts { if let st = store.readStatus(m.id) { out[m.id] = st } }
+        statuses = out
     }
 
     private func signalAll() {

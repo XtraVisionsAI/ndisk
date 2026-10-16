@@ -9,16 +9,62 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     private let holder = SessionHolder()
     private let pinnedDecoration: NSFileProviderItemDecorationIdentifier
 
+    /// 远端变更轮询间隔与"热目录"窗口。
+    static let pollInterval: TimeInterval = 60
+    static let hotWindow: UInt64 = 15 * 60
+    private var background: Task<Void, Never>?
+    private var lastError: String?
+
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         let bundleId = Bundle.main.bundleIdentifier ?? "ai.xtravisions.ndisk.FileProvider"
         self.pinnedDecoration = NSFileProviderItemDecorationIdentifier("\(bundleId).pinned")
         super.init()
         initLogging(filter: "info,aws_config=warn,aws_smithy_runtime=warn")
+        background = Task { [weak self] in await self?.backgroundLoop() }
     }
 
     func invalidate() {
+        background?.cancel()
         Task { await holder.close() }
+    }
+
+    /// 扩展存活期间：轮询用户最近看过的目录发现远端变更，执行 TTL 驱逐，写出状态供 App 展示。
+    private func backgroundLoop() async {
+        while !Task.isCancelled {
+            await pollOnce()
+            try? await Task.sleep(nanoseconds: UInt64(Self.pollInterval * 1_000_000_000))
+        }
+    }
+
+    private func pollOnce() async {
+        var changes: UInt64 = 0
+        do {
+            let s = try await session()
+            changes = try await s.refreshHotDirs(withinSeconds: Self.hotWindow)
+            if changes > 0 {
+                try await manager?.signalEnumerator(for: .workingSet)
+                log.info("remote changes discovered: \(changes)")
+            }
+            lastError = nil
+        } catch {
+            lastError = "\(error)"
+            log.error("poll failed: \(String(describing: error), privacy: .public)")
+        }
+        await evictExpired()
+        writeStatus(lastRefreshChanges: changes)
+    }
+
+    private func writeStatus(lastRefreshChanges: UInt64) {
+        guard let store = try? SharedStore.fromBundle() else { return }
+        Task {
+            guard let s = try? await session(), let st = try? s.status() else { return }
+            let status = SharedStore.MountStatus(
+                mountId: domain.identifier.rawValue, backend: st.backend, cachedBytes: st.cachedBytes,
+                pendingUploads: st.pendingUploads, materializedItems: st.materializedItems,
+                lastRefreshChanges: lastRefreshChanges, lastError: lastError, updatedAt: Date())
+            try? store.writeStatus(status)
+        }
     }
 
     // MARK: 会话

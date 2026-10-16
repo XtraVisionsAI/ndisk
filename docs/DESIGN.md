@@ -190,13 +190,16 @@ pub trait Backend: Send + Sync {
 
 调试入口：App 注册了 `ndisk://` URL scheme，`add` / `remove` / `signal`（唤醒工作集）供脚本与 `apple/Tools/ndisk-devctl` 使用。
 
+**远端变更发现**：扩展存活期间每 60 秒刷新用户最近 15 分钟内看过的目录（"热目录"），有变更则 `signalEnumerator(.workingSet)`；元数据 upsert 只在条目实际变化时写变更日志，避免每次刷新都让系统重新枚举。已验证直接写入 S3 的对象在一个周期内自动出现在 Finder。
+
+**冲突**：上传时 If-Match 失败（远端在编辑期间被改）→ 本地内容另存为 `name (conflicted copy YYYY-MM-DD HH-MM-SS).ext` 并上传，原条目回到远端版本。
+
+**App 状态展示**：扩展每个轮询周期把缓存占用、待上传数、已下载数、最近错误写入 App Group 容器的 `status/<id>.json`，菜单栏 App 打开时读取。不走 XPC，避免沙盒 App 需要访问 CloudStorage 路径。
+
 **待办**：
 
-
-- 远端变更目前只在列目录与工作集唤醒时发现，后续考虑按目录增量轮询；
-- App 状态展示（缓存占用、上传队列）需经扩展的 `NSFileProviderServiceSource` XPC 获取；
-- App 与扩展各自静态链接一份核心（Release 单二进制约 29 MB / 架构），后续改为共享动态框架以减半体积；
-- 冲突（412）当前直接报 `cannotSynchronize`，冲突副本策略待定。
+- 轮询只覆盖热目录；冷目录中的远端变更要等用户再次打开该目录；
+- App 与扩展各自静态链接一份核心（Release 单二进制约 29 MB / 架构），后续改为共享动态框架以减半体积。
 
 ### 4.2 Linux
 
@@ -236,7 +239,7 @@ ndisk/
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 S3 兼容服务读写，进程被杀后重挂载上传续传。**已完成**（2026-10-16，见 `scripts/e2e`）|
-| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**核心功能已验证**（2026-10-16）：读写、角标、右键动作、TTL 驱逐均在真机确认；剩余：App 状态展示、远端变更轮询、共享动态框架减体积、冲突副本 |
+| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**基本完成**（2026-10-16）：读写、角标、右键动作、TTL 驱逐、远端变更轮询在真机确认，冲突副本有单元测试，App 显示状态；剩余：共享动态框架减体积 |
 | M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试 |
 | M4 | Windows Cloud Files API | 资源管理器中占位符、按需下载、角标 |
 

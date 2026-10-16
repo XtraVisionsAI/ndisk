@@ -144,6 +144,17 @@ impl MetaStore {
     ) -> Result<ItemId> {
         let conn = self.conn.lock().unwrap();
         let mtime = e.mtime.map(to_secs);
+        // 列目录会对每个条目调用 upsert；只有内容真正变化时才写变更日志，
+        // 否则 File Provider 每次刷新都会重新枚举所有条目。
+        let existing: Option<ExistingRow> = conn
+            .query_row(
+                "SELECT id, kind, size, mtime, etag, remote_key FROM nodes WHERE parent_id = ?1 AND name = ?2",
+                params![parent.0, name],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .optional()?;
+        let unchanged = matches!(&existing, Some((_, k, sz, mt, tag, key))
+            if *k == kind_to_i(e.kind) && *sz == e.size as i64 && *mt == mtime && *tag == e.etag && key == remote_key);
         conn.execute(
             "INSERT INTO nodes(parent_id, name, kind, size, mtime, etag, remote_key, stat_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -161,15 +172,20 @@ impl MetaStore {
                 now()
             ],
         )?;
-        let id: i64 = conn.query_row(
-            "SELECT id FROM nodes WHERE parent_id = ?1 AND name = ?2",
-            params![parent.0, name],
-            |r| r.get(0),
-        )?;
-        conn.execute(
-            "INSERT INTO changes(item_id, deleted) VALUES (?1, 0)",
-            params![id],
-        )?;
+        let id: i64 = match existing {
+            Some((id, ..)) => id,
+            None => conn.query_row(
+                "SELECT id FROM nodes WHERE parent_id = ?1 AND name = ?2",
+                params![parent.0, name],
+                |r| r.get(0),
+            )?,
+        };
+        if !unchanged {
+            conn.execute(
+                "INSERT INTO changes(item_id, deleted) VALUES (?1, 0)",
+                params![id],
+            )?;
+        }
         Ok(ItemId(id as u64))
     }
 
@@ -209,6 +225,18 @@ impl MetaStore {
             params![dir.0, now()],
         )?;
         Ok(())
+    }
+
+    /// 在 `since` 之后被列举过的目录（用户最近看过的"热"目录），供远端变更轮询。
+    pub fn recently_listed_dirs(&self, since: SystemTime) -> Result<Vec<ItemId>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM nodes WHERE kind = 1 AND listed_at IS NOT NULL AND listed_at >= ?1 ORDER BY listed_at DESC",
+        )?;
+        let rows = stmt.query_map(params![to_secs(since)], |r| r.get::<_, i64>(0))?;
+        Ok(rows
+            .map(|r| r.map(|v| ItemId(v as u64)))
+            .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn listed_at(&self, dir: ItemId) -> Result<Option<SystemTime>> {
@@ -457,6 +485,9 @@ impl MetaStore {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
+
+/// upsert 用来比对的现有行：(id, kind, size, mtime, etag, remote_key)。
+type ExistingRow = (i64, i64, i64, Option<i64>, Option<String>, String);
 
 /// 驱逐器视角的一个已缓存节点。
 #[derive(Debug, Clone)]
