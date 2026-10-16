@@ -72,6 +72,16 @@ impl Writeback {
         Ok(path)
     }
 
+    /// 用外部文件整体替换内容（File Provider 的 createItem / modifyItem 交给我们的是完整文件），并登记上传。
+    pub async fn import(&self, id: ItemId, src: &std::path::Path) -> Result<()> {
+        {
+            let _guard = self.lock(id).await;
+            let dst = self.vfs.content().dirty_path(id);
+            tokio::fs::copy(src, &dst).await?;
+        }
+        self.enqueue(id).await
+    }
+
     /// close 后调用：登记上传任务。真正的上传由 `flush` / `resume_all` 驱动。
     pub async fn enqueue(&self, id: ItemId) -> Result<()> {
         let n = self.vfs.get(id)?;

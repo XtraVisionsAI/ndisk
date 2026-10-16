@@ -31,3 +31,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+# App 与扩展各自静态链接一份核心：用 LTO 与去调试信息控制体积。
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

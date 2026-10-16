@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleDisplayName</key>
+	<string>NDisk File Provider</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NdiskAppGroup</key>
+	<string>$(NDISK_APP_GROUP)</string>
+	<key>NdiskKeychainGroup</key>
+	<string>$(NDISK_KEYCHAIN_GROUP)</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-nonui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).FileProviderExtension</string>
+		<key>NSExtensionFileProviderSupportsEnumeration</key>
+		<true/>
+		<key>NSExtensionFileProviderDocumentGroup</key>
+		<string>$(NDISK_APP_GROUP)</string>
+		<!-- Finder 右键菜单。谓词里的 userInfo 由 FileProviderItem.userInfo 提供。 -->
+		<key>NSExtensionFileProviderActions</key>
+		<array>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(NDISK_BUNDLE_PREFIX).action.download</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>立即下载</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.isDownloaded == NO ).@count &gt; 0</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(NDISK_BUNDLE_PREFIX).action.pin</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>始终保留在本机</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.pinned == NO ).@count &gt; 0</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(NDISK_BUNDLE_PREFIX).action.unpin</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>取消始终保留</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.pinned == YES ).@count &gt; 0</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>$(NDISK_BUNDLE_PREFIX).action.evict</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>清理本地缓存</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.isDownloaded == YES AND $fileproviderItem.userInfo.pinned == NO ).@count &gt; 0</string>
+			</dict>
+		</array>
+		<!-- 自定义角标：始终保留在本机。云端 / 已下载 / 上传中的状态由系统自动显示。 -->
+		<key>NSFileProviderDecorations</key>
+		<array>
+			<dict>
+				<key>Identifier</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER).pinned</string>
+				<key>BadgeImageType</key>
+				<string>$(NDISK_BUNDLE_PREFIX).decoration.pinned</string>
+				<key>Category</key>
+				<string>Badge</string>
+				<key>Label</key>
+				<string>始终保留在本机</string>
+			</dict>
+		</array>
+	</dict>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>$(NDISK_BUNDLE_PREFIX).decoration.pinned</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.icon-decoration.badge</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Pinned</string>
+			<key>UTTypeIconFile</key>
+			<string>PinnedBadge</string>
+		</dict>
+	</array>
+</dict>
+</plist>

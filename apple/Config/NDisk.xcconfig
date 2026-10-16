@@ -1,0 +1,22 @@
+// 签名与标识配置。把真实值写进同目录的 Signing.local.xcconfig（已 gitignore），不要改这个文件：
+//
+//   NDISK_TEAM_ID = ABCDE12345
+//   NDISK_BUNDLE_PREFIX = ai.xtravisions.ndisk
+//
+// App Group 采用 macOS 的 "<TeamID>.<name>" 形式，Developer ID 分发无需额外注册；
+// 如改用 "group.xxx" 形式，需在开发者后台登记并使用描述文件。
+
+NDISK_TEAM_ID =
+NDISK_BUNDLE_PREFIX = ai.xtravisions.ndisk
+NDISK_APP_GROUP = $(NDISK_TEAM_ID).$(NDISK_BUNDLE_PREFIX)
+NDISK_KEYCHAIN_GROUP = $(NDISK_TEAM_ID).$(NDISK_BUNDLE_PREFIX).shared
+
+DEVELOPMENT_TEAM = $(NDISK_TEAM_ID)
+CODE_SIGN_STYLE = Automatic
+MACOSX_DEPLOYMENT_TARGET = 13.0
+SWIFT_VERSION = 5.0
+ENABLE_HARDENED_RUNTIME = YES
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+#include? "Signing.local.xcconfig"

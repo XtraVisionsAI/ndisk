@@ -144,13 +144,33 @@ impl ContentCache {
     /// 把已缓存的块拼成完整脏文件，作为写入起点。要求所有块齐全。
     pub async fn materialize_dirty(&self, id: ItemId, etag: &str, size: u64) -> Result<PathBuf> {
         let dst = self.dirty_path(id);
-        let mut out = tokio::fs::File::create(&dst).await?;
+        self.concat_blocks_to(id, etag, size, &dst).await?;
+        Ok(dst)
+    }
+
+    /// 把某版本的全部块按顺序拼接写入 `dst`（覆盖）。要求所有块齐全。
+    pub async fn concat_blocks_to(
+        &self,
+        id: ItemId,
+        version: &str,
+        size: u64,
+        dst: &Path,
+    ) -> Result<()> {
+        if let Some(dir) = dst.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let mut out = tokio::fs::File::create(dst).await?;
         for b in 0..self.block_count(size) {
-            let data = tokio::fs::read(self.block_path(id, etag, b)).await?;
+            let data = tokio::fs::read(self.block_path(id, version, b)).await?;
             out.write_all(&data).await?;
         }
         out.flush().await?;
-        Ok(dst)
+        Ok(())
+    }
+
+    /// 平台层导出文件时使用的临时目录（与缓存同卷，便于系统直接移动）。
+    pub fn staging_dir(&self) -> PathBuf {
+        self.root.join("staging")
     }
 
     pub async fn read_dirty(&self, id: ItemId, range: Range<u64>) -> Result<Bytes> {
@@ -187,6 +207,3 @@ async fn read_full(f: &mut tokio::fs::File, buf: &mut [u8]) -> std::io::Result<u
 fn hex(s: &str) -> String {
     s.bytes().map(|b| format!("{b:02x}")).collect()
 }
-
-#[allow(dead_code)]
-fn _assert_path(_: &Path) {}

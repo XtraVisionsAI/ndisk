@@ -30,6 +30,25 @@ ndisk -c my.toml mount ~/mnt/s3   # 前台运行，fusermount3 -u ~/mnt/s3 卸�
 它会启动 versitygw 作为 S3 兼容服务，覆盖读写、分片上传、重命名、删除、外部变更可见性、
 上传中 SIGKILL 后重挂载续传、非 ASCII 文件名、分片服务端复制、HTTP 代理、缓存策略与 TTL 回收。
 
+## macOS App 与 File Provider 扩展
+
+需要 Xcode 15+（已在 Xcode 27 验证）、Rust 的 `aarch64-apple-darwin`（Intel 版另需 `x86_64-apple-darwin`）、XcodeGen。
+
+```sh
+apple/scripts/build-rust.sh                     # Rust 核心 → NdiskFFI.xcframework + Swift 绑定
+cd apple/NdiskKit && swift test                 # Swift 侧单元测试
+NDISK_TEST_S3_ENDPOINT=http://127.0.0.1:7070 swift test   # 加上真实 S3 往返测试
+apple/scripts/build-app.sh --unsigned           # 不签名编译 App 与扩展
+open apple/NDisk.xcodeproj                      # 或在 Xcode 中构建运行（scheme 预操作会先构建 Rust）
+```
+
+签名运行前，在 `apple/Config/Signing.local.xcconfig` 中填写：
+
+```
+NDISK_TEAM_ID = <你的 Team ID>
+NDISK_BUNDLE_PREFIX = ai.xtravisions.ndisk
+```
+
 ## 缓存控制
 
 ```sh

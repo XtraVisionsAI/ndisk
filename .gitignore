@@ -2,3 +2,12 @@
 *.swp
 .DS_Store
 /src/target-linux
+
+# Apple：由 apple/scripts/build-rust.sh 生成
+/apple/NdiskKit/Frameworks/
+/apple/NdiskKit/Sources/NdiskKit/Generated/
+/apple/NdiskKit/.build/
+/apple/NdiskKit/.swiftpm/
+/apple/Config/Signing.local.xcconfig
+xcuserdata/
+*.xcuserstate

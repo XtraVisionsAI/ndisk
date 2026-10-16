@@ -10,7 +10,7 @@
 
 | 议题 | 决策 |
 |---|---|
-| macOS 呈现方式 | File Provider（Finder 侧栏位置，路径 `~/Library/CloudStorage/<Domain>`），不做 macFUSE |
+| macOS 呈现方式 | File Provider（Finder 侧栏位置，路径 `~/Library/CloudStorage/<Domain>`），不做 macFUSE；最低 macOS 13（见 4.1） |
 | 签名与分发 | Developer ID / App Store，File Provider entitlement 后续提供 |
 | 用户形态 | 个人单机使用，不做多人协同锁 |
 | 首期后端 | S3，兼容 MinIO / R2 / OSS 等 S3 兼容接口；认证支持 AK/SK、Profile、环境变量、STS AssumeRole、SSO、Web Identity |
@@ -18,7 +18,7 @@
 | Linux | CLI + FUSE 必做；桌面托盘与角标作为增强 |
 | Windows | Cloud Files API，M4 阶段 |
 | 核心语言 | Rust |
-| 最低系统 | macOS 12.3+、Windows 10 1709+、Linux 需 FUSE3 |
+| 最低系统 | macOS 13+（原定 12.3，因右键动作与 contentPolicy 提高）、Windows 10 1709+、Linux 需 FUSE3 |
 | 缓存加密 | 不需要 |
 | 网络 | 支持 HTTP(S) 代理、上传/下载限速 |
 | 授权 | 开源版 + 商用版（open core），第三方依赖只用商业友好许可（MIT / Apache-2.0 / BSD / MPL-2.0），不引入 GPL / AGPL |
@@ -142,23 +142,49 @@ pub trait Backend: Send + Sync {
 
 ### 4.1 macOS File Provider
 
-`NSFileProviderReplicatedExtension` 的回调与核心引擎的对应：
+**最低系统 macOS 13**：自定义右键动作（`NSFileProviderCustomAction`）、`contentPolicy`、`requestDownloadForItem` 均要求 13.0，因此部署目标从原定的 12.3 提高到 13.0。
 
-| File Provider 回调 | 核心引擎 |
+**工程结构**（`apple/`，由 XcodeGen 的 `project.yml` 生成 `NDisk.xcodeproj`）：
+
+| 部分 | 内容 |
 |---|---|
-| `enumerator(for:)` / `enumerateItems` | `vfs.list(item_id, cursor)`，分页返回 |
-| `enumerateChanges(from anchor)` | `vfs.changes_since(anchor)`，anchor 为本地变更序号 |
-| `item(for:)` | `vfs.stat(item_id)` |
-| `fetchContents(for:)` | `cache.ensure_full(item_id)`，块级下载并报告进度 |
-| `createItem` / `modifyItem`（内容） | 写入 dirty 副本 → `writeback.enqueue` |
-| `modifyItem`（重命名 / 移动） | `vfs.rename` |
-| `deleteItem` | `vfs.delete` |
-| `materializedItemsDidChange` / `evict` | 系统驱逐与我们的 TTL 驱逐共用 `cache.evict(item_id)` |
-| 角标 | 系统根据 materialized 状态自动显示云朵 / 本地；上传中由 `isUploading` 字段驱动 |
+| `NdiskKit`（Swift Package） | `NdiskFFI.xcframework`（Rust 静态库 + UniFFI 头文件）、生成的 Swift 绑定、标识符互转与错误映射、App Group 存储与钥匙串 |
+| `NDisk`（菜单栏 App） | 挂载列表、添加挂载（含测试连接）、注册 / 移除 domain、定期唤醒工作集 |
+| `NDiskFileProvider`（扩展） | `NSFileProviderReplicatedExtension` + `NSFileProviderCustomAction`，一个 domain 一个实例，domain id 即挂载 id |
+| `Config/NDisk.xcconfig` | Team ID、Bundle 前缀、App Group、钥匙串组；真实值写入 gitignore 的 `Signing.local.xcconfig` |
 
-自定义右键动作（`NSFileProviderAction`）：立即下载、固定为始终缓存、取消固定、清理本地缓存、复制对象 URL。系统自带"移除下载"。
+**内容由系统持有**：replicated 模型下系统把 `fetchContents` 交出的文件保存在自己的存储中，"已下载 / 云端"状态与角标由系统维护。因此：
 
-菜单栏 App 负责：账户管理、挂载点配置、缓存策略、传输队列与速度、限速与代理。扩展进程和 App 进程通过 UniFFI 直接调用同一份核心库，状态落在共享 App Group 容器的 SQLite 中。
+- `fetchContents` 把内容导出到 staging 文件交给系统，随即清掉引擎块缓存（固定内容除外），避免双份占用；
+- "始终保留在本机"映射为 `contentPolicy = .downloadEagerlyAndKeepDownloaded`，子项为 `.inherited`，由系统负责下载与保持；引擎只记录策略（`set_policy_only`），不预取；
+- TTL 从下载时刻起算：引擎在 `materialized` 表记录下载时间，`materializedItemsDidChange` 时与系统的已下载集合对齐，`eviction_candidates` 给出到期项，由扩展调用 `NSFileProviderManager.evictItem`；
+- 菜单栏 App 每 10 分钟 `signalEnumerator(.workingSet)`，唤醒扩展上报变更并执行一次驱逐。
+
+**会话归属**：同一挂载的引擎会话只由扩展持有，App 不为已登记挂载打开会话，避免两个写回队列重复上传；App 的"测试连接"使用临时缓存目录。
+
+**回调对应**：
+
+| File Provider 回调 | Rust（`ndisk-ffi::Session`） |
+|---|---|
+| `item(for:)` | `item(id)`，只查本地 |
+| `enumerator(for:)` → `enumerateItems` | `list(dir, force)`，首页强制刷新 |
+| 工作集 `enumerateChanges(from:)` | `changes_since(anchor)`，锚点为 8 字节大端序 u64 |
+| `currentSyncAnchor` | `current_anchor()` |
+| `fetchContents(for:)` | `fetch_contents(id, dest)` |
+| `createItem` | `create_item(parent, name, kind, contents)` |
+| `modifyItem`（内容 / 重命名 / 移动） | `modify_contents` / `rename` |
+| `deleteItem`（含 `.recursive`） | `delete`，递归由扩展展开 |
+| `materializedItemsDidChange` | `sync_materialized` + `eviction_candidates` + `mark_evicted` |
+| 右键动作 | 立即下载（系统 `requestDownloadForItem`）、始终保留 / 取消（`pin` / `unpin`）、清理本地缓存（系统 `evictItem`） |
+| 角标 | 云端 / 已下载 / 上传中由系统显示；固定项用自定义装饰 `PinnedBadge` |
+
+**待办与需签名后验证**：
+
+- 右键动作谓词中 `isDownloaded`、`userInfo.pinned` 的可用性需在签名运行后确认；
+- 远端变更目前只在列目录与工作集唤醒时发现，后续考虑按目录增量轮询；
+- App 状态展示（缓存占用、上传队列）需经扩展的 `NSFileProviderServiceSource` XPC 获取；
+- App 与扩展各自静态链接一份核心（Release 单二进制约 29 MB / 架构），后续改为共享动态框架以减半体积；
+- 冲突（412）当前直接报 `cannotSynchronize`，冲突副本策略待定。
 
 ### 4.2 Linux
 
@@ -198,7 +224,7 @@ ndisk/
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 S3 兼容服务读写，进程被杀后重挂载上传续传。**已完成**（2026-10-16，见 `scripts/e2e`）|
-| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作 |
+| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**进行中**：UniFFI 绑定与 Xcode 工程骨架已完成并可编译，待签名后真机验证 |
 | M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试 |
 | M4 | Windows Cloud Files API | 资源管理器中占位符、按需下载、角标 |
 

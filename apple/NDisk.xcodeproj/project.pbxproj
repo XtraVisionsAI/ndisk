@@ -1,0 +1,516 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1B0DE00398179A8A5E6F7038 /* NDiskApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8794B057EC839A67B928A5B /* NDiskApp.swift */; };
+		263A9CC15F4AB9700EDF14B5 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C21F9AFAF99751F2E66B50 /* FileProviderExtension.swift */; };
+		47D0B8ABF44F9FBA2FCAEFAE /* NDiskFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		4905C602D8FAFDA1DBD06830 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */; };
+		6B3E650EE7EFD539F8402030 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 75A0D1C83F997E594D0C5ED4 /* NdiskKit */; };
+		794090EF6CAB89E2256DEEC1 /* AddMountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628D9507BC069575CAB86100 /* AddMountView.swift */; };
+		7AD8CFE04A40A5BAADF2E9CA /* MountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFA7A63883209936D438B34 /* MountsModel.swift */; };
+		DDED06EDC0DD0D0C5EE7C909 /* PinnedBadge.icns in Resources */ = {isa = PBXBuildFile; fileRef = CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */; };
+		EE272EBD480766DED360DCE9 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B88564D1C72681750AFF99 /* FileProviderItem.swift */; };
+		FFC3BA23E5CBF128403D781A /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CA2B931E1694FA84C95A47FB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E03F610C769793F8577320C0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 91C43DB801D4F2F92812823F;
+			remoteInfo = NDiskFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		8E1464C13431AEC4A805EF48 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				47D0B8ABF44F9FBA2FCAEFAE /* NDiskFileProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
+		5AF44CD52A30F3F8C5619594 /* NDisk.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = NDisk.xcconfig; sourceTree = "<group>"; };
+		628D9507BC069575CAB86100 /* AddMountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddMountView.swift; sourceTree = "<group>"; };
+		6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NDiskFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6E772CE1E3EADD76A3797810 /* NdiskKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = NdiskKit; path = NdiskKit; sourceTree = SOURCE_ROOT; };
+		A7B88564D1C72681750AFF99 /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
+		ADFA7A63883209936D438B34 /* MountsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountsModel.swift; sourceTree = "<group>"; };
+		C5C21F9AFAF99751F2E66B50 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = PinnedBadge.icns; sourceTree = "<group>"; };
+		D8794B057EC839A67B928A5B /* NDiskApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NDiskApp.swift; sourceTree = "<group>"; };
+		EAFADB2E00BC2C6A02B3A6B9 /* NDisk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NDisk.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		079ACF06250D3E9A1052050C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4905C602D8FAFDA1DBD06830 /* NdiskKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FD76380E4BAA5DCBEA25A271 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6B3E650EE7EFD539F8402030 /* NdiskKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		216527CCF7D30F776758FC32 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				628D9507BC069575CAB86100 /* AddMountView.swift */,
+				ADFA7A63883209936D438B34 /* MountsModel.swift */,
+				D8794B057EC839A67B928A5B /* NDiskApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		423CB4423A1D654E461FF4BA /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		752CF4EA22DDA58C0F29232A /* FileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */,
+				C5C21F9AFAF99751F2E66B50 /* FileProviderExtension.swift */,
+				A7B88564D1C72681750AFF99 /* FileProviderItem.swift */,
+				423CB4423A1D654E461FF4BA /* Resources */,
+			);
+			path = FileProvider;
+			sourceTree = "<group>";
+		};
+		7C0665F614500402EC01EBE6 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				6E772CE1E3EADD76A3797810 /* NdiskKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		8A26E5092FB9BD9F72082F45 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				5AF44CD52A30F3F8C5619594 /* NDisk.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		D52DAFB0815CECD14546943C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EAFADB2E00BC2C6A02B3A6B9 /* NDisk.app */,
+				6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F02E8DCE9036447EDC4D80E8 = {
+			isa = PBXGroup;
+			children = (
+				216527CCF7D30F776758FC32 /* App */,
+				8A26E5092FB9BD9F72082F45 /* Config */,
+				752CF4EA22DDA58C0F29232A /* FileProvider */,
+				7C0665F614500402EC01EBE6 /* Packages */,
+				D52DAFB0815CECD14546943C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		91C43DB801D4F2F92812823F /* NDiskFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1AB0A5A997270EEF984AF41C /* Build configuration list for PBXNativeTarget "NDiskFileProvider" */;
+			buildPhases = (
+				A9FA78A58CA48C096D875EC4 /* Sources */,
+				6D9BA0B146469FDD2B167510 /* Resources */,
+				FD76380E4BAA5DCBEA25A271 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NDiskFileProvider;
+			packageProductDependencies = (
+				75A0D1C83F997E594D0C5ED4 /* NdiskKit */,
+			);
+			productName = NDiskFileProvider;
+			productReference = 6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A5B896173AEFDB5269052AD4 /* NDisk */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6536CF7EB458FEE79716A88C /* Build configuration list for PBXNativeTarget "NDisk" */;
+			buildPhases = (
+				0D8AF331EE2C6798B80C69BB /* Sources */,
+				079ACF06250D3E9A1052050C /* Frameworks */,
+				8E1464C13431AEC4A805EF48 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				97E316C8EE6256FD8AB47C18 /* PBXTargetDependency */,
+			);
+			name = NDisk;
+			packageProductDependencies = (
+				7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */,
+			);
+			productName = NDisk;
+			productReference = EAFADB2E00BC2C6A02B3A6B9 /* NDisk.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E03F610C769793F8577320C0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					91C43DB801D4F2F92812823F = {
+						DevelopmentTeam = "$(NDISK_TEAM_ID)";
+						ProvisioningStyle = Automatic;
+					};
+					A5B896173AEFDB5269052AD4 = {
+						DevelopmentTeam = "$(NDISK_TEAM_ID)";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 7FD30ECEF83299E3B4F8B20A /* Build configuration list for PBXProject "NDisk" */;
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = F02E8DCE9036447EDC4D80E8;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7FF940312138CB09ED8E518C /* XCLocalSwiftPackageReference "NdiskKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = D52DAFB0815CECD14546943C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A5B896173AEFDB5269052AD4 /* NDisk */,
+				91C43DB801D4F2F92812823F /* NDiskFileProvider */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6D9BA0B146469FDD2B167510 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DDED06EDC0DD0D0C5EE7C909 /* PinnedBadge.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0D8AF331EE2C6798B80C69BB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				794090EF6CAB89E2256DEEC1 /* AddMountView.swift in Sources */,
+				7AD8CFE04A40A5BAADF2E9CA /* MountsModel.swift in Sources */,
+				1B0DE00398179A8A5E6F7038 /* NDiskApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A9FA78A58CA48C096D875EC4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FFC3BA23E5CBF128403D781A /* FileProviderEnumerator.swift in Sources */,
+				263A9CC15F4AB9700EDF14B5 /* FileProviderExtension.swift in Sources */,
+				EE272EBD480766DED360DCE9 /* FileProviderItem.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		97E316C8EE6256FD8AB47C18 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 91C43DB801D4F2F92812823F /* NDiskFileProvider */;
+			targetProxy = CA2B931E1694FA84C95A47FB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A498DB38A3BF1532797F2C57 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/NDisk.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NDISK_BUNDLE_PREFIX)";
+				PRODUCT_NAME = NDisk;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		AD3ACAF2F6DC6CB28B747A2A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5AF44CD52A30F3F8C5619594 /* NDisk.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		AF8C078CBED886ECCBC13E4B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NDISK_BUNDLE_PREFIX).FileProvider";
+				PRODUCT_NAME = NDiskFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		B83A55EA42DF34D11660C34A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NDISK_BUNDLE_PREFIX).FileProvider";
+				PRODUCT_NAME = NDiskFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		C274D5C3C403E7C6861FF015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5AF44CD52A30F3F8C5619594 /* NDisk.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		C3C23ED9BB1D0E198E76826B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/NDisk.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(NDISK_BUNDLE_PREFIX)";
+				PRODUCT_NAME = NDisk;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1AB0A5A997270EEF984AF41C /* Build configuration list for PBXNativeTarget "NDiskFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B83A55EA42DF34D11660C34A /* Debug */,
+				AF8C078CBED886ECCBC13E4B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6536CF7EB458FEE79716A88C /* Build configuration list for PBXNativeTarget "NDisk" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A498DB38A3BF1532797F2C57 /* Debug */,
+				C3C23ED9BB1D0E198E76826B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7FD30ECEF83299E3B4F8B20A /* Build configuration list for PBXProject "NDisk" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C274D5C3C403E7C6861FF015 /* Debug */,
+				AD3ACAF2F6DC6CB28B747A2A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		7FF940312138CB09ED8E518C /* XCLocalSwiftPackageReference "NdiskKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = NdiskKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		75A0D1C83F997E594D0C5ED4 /* NdiskKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NdiskKit;
+		};
+		7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NdiskKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E03F610C769793F8577320C0 /* Project object */;
+}

@@ -1,0 +1,64 @@
+# XcodeGen 工程描述。修改后运行 apple/scripts/gen-project.sh 重新生成 NDisk.xcodeproj。
+name: NDisk
+options:
+  bundleIdPrefix: ai.xtravisions.ndisk
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  developmentLanguage: zh-Hans
+configFiles:
+  Debug: Config/NDisk.xcconfig
+  Release: Config/NDisk.xcconfig
+packages:
+  NdiskKit:
+    path: NdiskKit
+targets:
+  NDisk:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes: ["*.entitlements", "Info.plist"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(NDISK_BUNDLE_PREFIX)
+        PRODUCT_NAME: NDisk
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/NDisk.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: NdiskKit
+      - target: NDiskFileProvider
+        embed: true
+        codeSign: true
+  NDiskFileProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: FileProvider
+        excludes: ["*.entitlements", "Info.plist"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(NDISK_BUNDLE_PREFIX).FileProvider
+        PRODUCT_NAME: NDiskFileProvider
+        INFOPLIST_FILE: FileProvider/Info.plist
+        CODE_SIGN_ENTITLEMENTS: FileProvider/FileProvider.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+    dependencies:
+      - package: NdiskKit
+schemes:
+  NDisk:
+    build:
+      targets:
+        NDisk: all
+      preActions:
+        - name: Build Rust core
+          settingsTarget: NDisk
+          script: |
+            "${SRCROOT}/scripts/build-rust.sh" > "${TMPDIR:-/tmp}/ndisk-build-rust.log" 2>&1 || {
+              echo "Rust build failed, see ${TMPDIR:-/tmp}/ndisk-build-rust.log" >&2; exit 1; }
+    run:
+      config: Debug
+    archive:
+      config: Release

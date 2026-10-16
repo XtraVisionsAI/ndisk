@@ -1,134 +1,669 @@
-//! 面向 Swift / Kotlin / C# 的稳定 API 层。
+//! 面向 Swift（以及后续 Kotlin / C#）的稳定 API 层，基于 UniFFI 过程宏导出。
 //!
-//! M2 阶段用 UniFFI 导出；当前先定义好与 File Provider 回调一一对应的接口形状，
-//! 便于 Swift 侧并行开发。对应关系见 `docs/DESIGN.md` 4.1。
+//! 与 File Provider 回调的对应关系见 `docs/DESIGN.md` 4.1。约定：
+//! - ItemId 以 `u64` 传递，`1` 为根目录；Swift 侧负责与 `NSFileProviderItemIdentifier` 互转；
+//! - 涉及网络或磁盘的操作都是 `async`，在 [`Session`] 自有的 tokio runtime 上执行，
+//!   Swift 侧直接 `await`，不会阻塞 File Provider 的回调线程；
+//! - 读元数据（`item`、`changes_since`）只查本地 SQLite，同步返回。
 
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, SystemTime};
 
-use ndisk_core::{ChangeAnchor, Engine, ItemId, Result};
+use ndisk_core::config::{BackendConfig, MountConfig, S3Auth, S3Config};
+use ndisk_core::{CachePolicy, Change, ChangeAnchor, Engine, ItemId, Kind, LocalState, Node};
 
-/// File Provider 扩展与菜单栏 App 共享的会话对象。一个挂载点一个实例。
-pub struct Session {
-    engine: Arc<Engine>,
-    rt: tokio::runtime::Runtime,
+uniffi::setup_scaffolding!();
+
+// ---------------------------------------------------------------- errors
+
+/// 映射到 Swift 后由扩展转换为 `NSFileProviderError` / `CocoaError`。
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum NdiskError {
+    #[error("not found: {message}")]
+    NotFound { message: String },
+    #[error("already exists: {message}")]
+    AlreadyExists { message: String },
+    #[error("not a directory: {message}")]
+    NotADirectory { message: String },
+    #[error("is a directory: {message}")]
+    IsADirectory { message: String },
+    #[error("directory not empty: {message}")]
+    DirectoryNotEmpty { message: String },
+    #[error("permission denied: {message}")]
+    PermissionDenied { message: String },
+    #[error("read-only mount")]
+    ReadOnly,
+    /// 远端已被修改（ETag 不匹配）。
+    #[error("conflict: {message}")]
+    Conflict { message: String },
+    /// 离线且内容未缓存，或网络不可达。
+    #[error("offline: {message}")]
+    Offline { message: String },
+    #[error("unsupported: {message}")]
+    Unsupported { message: String },
+    #[error("config: {message}")]
+    Config { message: String },
+    #[error("{message}")]
+    Other { message: String },
 }
 
-impl Session {
-    pub fn open(config_toml: &str, cache_root: &str, secret: Option<String>) -> Result<Self> {
-        let cfg = ndisk_core::config::MountConfig::from_toml(config_toml)?;
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        let engine = rt.block_on(async {
+impl From<ndisk_core::Error> for NdiskError {
+    fn from(e: ndisk_core::Error) -> Self {
+        use ndisk_core::Error as E;
+        let message = e.to_string();
+        match e {
+            E::NotFound(_) => Self::NotFound { message },
+            E::AlreadyExists(_) => Self::AlreadyExists { message },
+            E::NotADirectory(_) => Self::NotADirectory { message },
+            E::IsADirectory(_) => Self::IsADirectory { message },
+            E::DirectoryNotEmpty(_) => Self::DirectoryNotEmpty { message },
+            E::PermissionDenied(_) => Self::PermissionDenied { message },
+            E::ReadOnly => Self::ReadOnly,
+            E::Conflict { .. } => Self::Conflict { message },
+            E::Offline(_) => Self::Offline { message },
+            E::Unsupported(_) => Self::Unsupported { message },
+            E::Config(_) => Self::Config { message },
+            E::Backend(_) | E::Io(_) | E::Db(_) => Self::Other { message },
+        }
+    }
+}
+
+impl From<tokio::task::JoinError> for NdiskError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        Self::Other {
+            message: format!("task failed: {e}"),
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, NdiskError>;
+
+// ---------------------------------------------------------------- records
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ItemKind {
+    File,
+    Directory,
+}
+
+/// 本地状态。macOS 上"是否已下载"由系统掌握，这里主要用于上传状态与 CLI / 托盘展示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ItemState {
+    Cloud,
+    Partial,
+    Cached,
+    Dirty,
+    Uploading,
+    Pinned,
+}
+
+/// 缓存策略。`Transient` 对应核心的 `CachePolicy::None`（避免与 Swift `Optional.none` 混淆）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum CachePolicyFfi {
+    Ttl { seconds: u64 },
+    Always,
+    Transient,
+}
+
+impl From<CachePolicy> for CachePolicyFfi {
+    fn from(p: CachePolicy) -> Self {
+        match p {
+            CachePolicy::Ttl(d) => Self::Ttl {
+                seconds: d.as_secs(),
+            },
+            CachePolicy::Always => Self::Always,
+            CachePolicy::None => Self::Transient,
+        }
+    }
+}
+
+impl From<CachePolicyFfi> for CachePolicy {
+    fn from(p: CachePolicyFfi) -> Self {
+        match p {
+            CachePolicyFfi::Ttl { seconds } => CachePolicy::Ttl(Duration::from_secs(seconds)),
+            CachePolicyFfi::Always => CachePolicy::Always,
+            CachePolicyFfi::Transient => CachePolicy::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ItemInfo {
+    pub id: u64,
+    pub parent: u64,
+    pub name: String,
+    pub kind: ItemKind,
+    pub size: u64,
+    pub mtime: Option<SystemTime>,
+    /// 内容版本（etag 或其回退值），用作 `NSFileProviderItemVersion.contentVersion`。
+    pub content_version: String,
+    /// 元数据版本，用作 `NSFileProviderItemVersion.metadataVersion`。
+    pub metadata_version: String,
+    pub state: ItemState,
+    /// 生效的缓存策略（已解析继承），决定 `contentPolicy` 与角标。
+    pub effective_policy: CachePolicyFfi,
+    /// 是否有本地修改尚未上传，对应 `isUploaded == false`。
+    pub pending_upload: bool,
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum ItemChange {
+    Updated { item: ItemInfo },
+    Deleted { id: u64 },
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ChangeBatch {
+    pub changes: Vec<ItemChange>,
+    /// 下一次调用 `changes_since` 时传入的锚点。
+    pub anchor: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MaintainResult {
+    pub ttl_evicted: u64,
+    pub capacity_evicted: u64,
+    pub bytes_freed: u64,
+    pub prefetched: u64,
+    pub cached_bytes: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SessionStatus {
+    pub mount_id: String,
+    pub display_name: String,
+    pub backend: String,
+    pub cached_bytes: u64,
+    pub pending_uploads: u64,
+    pub materialized_items: u64,
+}
+
+/// 菜单栏 App 添加挂载时填写的 S3 参数，由 [`render_s3_config`] 转成 TOML。
+/// 密钥不在这里，单独存入钥匙串。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct S3MountSpec {
+    pub id: String,
+    pub display_name: String,
+    pub bucket: String,
+    pub prefix: String,
+    pub region: Option<String>,
+    pub endpoint: Option<String>,
+    pub force_path_style: bool,
+    /// 为空表示使用 aws-config 默认凭据链。
+    pub access_key_id: Option<String>,
+    pub profile: Option<String>,
+    pub default_policy: CachePolicyFfi,
+    pub max_cache_bytes: Option<u64>,
+    pub proxy: Option<String>,
+    pub upload_limit: u64,
+    pub download_limit: u64,
+    pub read_only: bool,
+}
+
+// ---------------------------------------------------------------- free functions
+
+/// 生成挂载配置 TOML。
+#[uniffi::export]
+pub fn render_s3_config(spec: S3MountSpec) -> Result<String> {
+    let auth = match (&spec.access_key_id, &spec.profile) {
+        (Some(ak), _) if !ak.is_empty() => S3Auth::Static {
+            access_key_id: ak.clone(),
+            secret_ref: format!("keychain:{}", spec.id),
+        },
+        (_, Some(p)) if !p.is_empty() => S3Auth::Profile { name: p.clone() },
+        _ => S3Auth::Default,
+    };
+    let mut cfg = MountConfig {
+        id: spec.id,
+        display_name: spec.display_name,
+        backend: BackendConfig::S3(S3Config {
+            bucket: spec.bucket,
+            prefix: spec.prefix,
+            region: spec.region.filter(|s| !s.is_empty()),
+            endpoint: spec.endpoint.filter(|s| !s.is_empty()),
+            force_path_style: spec.force_path_style,
+            auth,
+            dir_markers: true,
+            copy_threshold: None,
+        }),
+        cache: Default::default(),
+        network: Default::default(),
+        read_only: spec.read_only,
+    };
+    cfg.cache.policy = spec.default_policy.into();
+    if let Some(m) = spec.max_cache_bytes {
+        cfg.cache.max_bytes = m;
+    }
+    cfg.network.proxy = spec.proxy.filter(|s| !s.is_empty());
+    cfg.network.upload_limit = spec.upload_limit;
+    cfg.network.download_limit = spec.download_limit;
+    cfg.validate()?;
+    Ok(cfg.to_toml()?)
+}
+
+/// 初始化日志（进程内只生效一次）。`filter` 形如 `info,ndisk_core=debug`。
+#[uniffi::export]
+pub fn init_logging(filter: String) {
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+            .with_ansi(false)
+            .try_init();
+    });
+}
+
+#[uniffi::export]
+pub fn core_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// 打开一个挂载会话。`secret` 为静态密钥时从钥匙串取出的 Secret Access Key。
+#[uniffi::export]
+pub async fn open_session(
+    config_toml: String,
+    cache_root: String,
+    secret: Option<String>,
+) -> Result<Arc<Session>> {
+    let cfg = MountConfig::from_toml(&config_toml)?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_name("ndisk-rt")
+        .enable_all()
+        .build()
+        .map_err(|e| NdiskError::Other {
+            message: e.to_string(),
+        })?;
+    let cache_root = PathBuf::from(cache_root);
+    let engine = rt
+        .spawn(async move {
             let backend: Arc<dyn ndisk_core::Backend> = match &cfg.backend {
-                ndisk_core::config::BackendConfig::S3(s3) => Arc::new(
+                BackendConfig::S3(s3) => Arc::new(
                     ndisk_backend_s3::S3Backend::connect(s3, secret, cfg.network.proxy.as_deref())
                         .await?,
                 ),
-                _ => return Err(ndisk_core::Error::Unsupported("backend not implemented")),
+                BackendConfig::Opendal { scheme, .. } => {
+                    return Err(ndisk_core::Error::Config(format!(
+                        "backend '{scheme}' not implemented"
+                    )))
+                }
             };
-            Engine::open(cfg.clone(), backend, cache_root.into())
-        })?;
-        Ok(Self {
-            engine: Arc::new(engine),
-            rt,
+            let engine = Arc::new(Engine::open(cfg, backend, cache_root)?);
+            engine.resume_uploads().await?;
+            Ok::<_, ndisk_core::Error>(engine)
+        })
+        .await??;
+    Ok(Arc::new(Session {
+        engine,
+        rt: Mutex::new(Some(rt)),
+    }))
+}
+
+// ---------------------------------------------------------------- session
+
+/// 一个挂载点一个实例；File Provider 扩展与菜单栏 App 各自持有。
+#[derive(uniffi::Object)]
+pub struct Session {
+    engine: Arc<Engine>,
+    rt: Mutex<Option<tokio::runtime::Runtime>>,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Swift 可能在任意线程释放对象：不能在异步上下文里同步 drop runtime。
+        if let Some(rt) = self.rt.lock().unwrap().take() {
+            rt.shutdown_background();
+        }
+    }
+}
+
+impl Session {
+    async fn run<F, T>(&self, f: F) -> Result<T>
+    where
+        F: std::future::Future<Output = ndisk_core::Result<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        let handle = {
+            let rt = self.rt.lock().unwrap();
+            rt.as_ref()
+                .ok_or_else(|| NdiskError::Other {
+                    message: "session closed".into(),
+                })?
+                .handle()
+                .clone()
+        };
+        Ok(handle.spawn(f).await??)
+    }
+
+    fn info(&self, n: Node) -> ndisk_core::Result<ItemInfo> {
+        let pending = self.engine.writeback.is_pending(n.id)?;
+        let policy = self.engine.effective_policy(n.id)?;
+        Ok(to_info(n, pending, policy))
+    }
+}
+
+#[uniffi::export]
+impl Session {
+    pub fn status(&self) -> Result<SessionStatus> {
+        let m = self.engine.vfs.meta();
+        Ok(SessionStatus {
+            mount_id: self.engine.cfg.id.clone(),
+            display_name: self.engine.cfg.display_name.clone(),
+            backend: self.engine.vfs.backend().name().to_string(),
+            cached_bytes: m.total_cached_bytes()?,
+            pending_uploads: m.uploads_pending()?.len() as u64,
+            materialized_items: m.materialized_items()?.len() as u64,
         })
     }
 
-    // enumerator(for:) / enumerateItems
-    pub fn list(&self, dir: u64, force: bool) -> Result<String> {
-        let nodes = self.rt.block_on(self.engine.vfs.list(ItemId(dir), force))?;
-        Ok(serde_json::to_string(&nodes).unwrap_or_default())
+    // ---- 元数据（同步，只查本地）----
+
+    /// `item(for:)`。
+    pub fn item(&self, id: u64) -> Result<ItemInfo> {
+        let n = self.engine.stat(ItemId(id))?;
+        Ok(self.info(n)?)
     }
 
-    // item(for:)
-    pub fn item(&self, id: u64) -> Result<String> {
-        Ok(serde_json::to_string(&self.engine.vfs.get(ItemId(id))?).unwrap_or_default())
+    /// 当前变更锚点，`enumerator.currentSyncAnchor`。
+    pub fn current_anchor(&self) -> Result<u64> {
+        Ok(self.engine.vfs.meta().latest_anchor()?.0)
     }
 
-    // enumerateChanges(from:)
-    pub fn changes_since(&self, anchor: u64) -> Result<(String, u64)> {
+    /// `enumerateChanges(from:)`。
+    pub fn changes_since(&self, anchor: u64) -> Result<ChangeBatch> {
         let (changes, next) = self.engine.vfs.changes_since(ChangeAnchor(anchor))?;
-        Ok((serde_json::to_string(&changes).unwrap_or_default(), next.0))
+        let mut out = Vec::with_capacity(changes.len());
+        for c in changes {
+            match c {
+                Change::Upsert(n) => {
+                    let n = self.engine.stat(n.id)?;
+                    out.push(ItemChange::Updated {
+                        item: self.info(n)?,
+                    });
+                }
+                Change::Delete(id) => out.push(ItemChange::Deleted { id: id.0 }),
+            }
+        }
+        Ok(ChangeBatch {
+            changes: out,
+            anchor: next.0,
+        })
     }
 
-    // fetchContents(for:) → 返回已完整落盘后可供复制的本地块目录；M2 阶段改为直接给出文件路径。
-    pub fn download(&self, id: u64) -> Result<()> {
-        self.rt.block_on(self.engine.download(ItemId(id)))
+    // ---- 枚举与查找（可能访问网络）----
+
+    /// `enumerateItems`。`force` 时忽略目录 TTL 强制刷新。
+    pub async fn list(&self, dir: u64, force: bool) -> Result<Vec<ItemInfo>> {
+        let e = self.engine.clone();
+        let nodes = self
+            .run(async move { e.vfs.list(ItemId(dir), force).await })
+            .await?;
+        nodes
+            .into_iter()
+            .map(|n| self.info(n).map_err(Into::into))
+            .collect()
     }
 
-    // modifyItem(contents) → 写入脏文件后调用
-    pub fn open_for_write(&self, id: u64) -> Result<String> {
-        Ok(self
-            .rt
-            .block_on(self.engine.writeback.open_for_write(ItemId(id)))?
+    pub async fn lookup(&self, parent: u64, name: String) -> Result<ItemInfo> {
+        let e = self.engine.clone();
+        let n = self
+            .run(async move { e.vfs.lookup(ItemId(parent), &name).await })
+            .await?;
+        Ok(self.info(n)?)
+    }
+
+    // ---- 内容 ----
+
+    /// `fetchContents(for:)`：导出完整内容到 `dest_path`，返回导出时的条目。
+    pub async fn fetch_contents(&self, id: u64, dest_path: String) -> Result<ItemInfo> {
+        let e = self.engine.clone();
+        let n = self
+            .run(async move {
+                e.export_to(ItemId(id), std::path::Path::new(&dest_path), false)
+                    .await
+            })
+            .await?;
+        Ok(self.info(n)?)
+    }
+
+    /// 导出用的临时目录（与缓存同卷）。
+    pub fn staging_dir(&self) -> String {
+        self.engine
+            .vfs
+            .content()
+            .staging_dir()
             .to_string_lossy()
-            .into_owned())
-    }
-    pub fn close_written(&self, id: u64) -> Result<()> {
-        self.rt.block_on(self.engine.writeback.enqueue(ItemId(id)))
-    }
-    pub fn flush(&self, id: u64) -> Result<()> {
-        self.rt
-            .block_on(self.engine.writeback.flush(ItemId(id)))
-            .map(|_| ())
+            .into_owned()
     }
 
-    // createItem / modifyItem(rename) / deleteItem
-    pub fn mkdir(&self, parent: u64, name: &str) -> Result<u64> {
-        Ok(self
-            .rt
-            .block_on(self.engine.vfs.mkdir(ItemId(parent), name))?
-            .id
-            .0)
-    }
-    pub fn create_file(&self, parent: u64, name: &str) -> Result<u64> {
-        Ok(self
-            .rt
-            .block_on(self.engine.vfs.create_file(ItemId(parent), name))?
-            .id
-            .0)
-    }
-    pub fn rename(&self, id: u64, new_parent: u64, new_name: &str) -> Result<()> {
-        self.rt
-            .block_on(
-                self.engine
-                    .vfs
-                    .rename(ItemId(id), ItemId(new_parent), new_name),
-            )
-            .map(|_| ())
-    }
-    pub fn delete(&self, id: u64) -> Result<()> {
-        self.rt.block_on(self.engine.vfs.delete(ItemId(id)))
+    // ---- 修改 ----
+
+    /// `createItem`：`contents_path` 为空表示目录或空文件。
+    pub async fn create_item(
+        &self,
+        parent: u64,
+        name: String,
+        kind: ItemKind,
+        contents_path: Option<String>,
+    ) -> Result<ItemInfo> {
+        let e = self.engine.clone();
+        let n = self
+            .run(async move {
+                e.ensure_writable()?;
+                match kind {
+                    ItemKind::Directory => e.vfs.mkdir(ItemId(parent), &name).await,
+                    ItemKind::File => {
+                        let node = e.vfs.create_file(ItemId(parent), &name).await?;
+                        let src = match &contents_path {
+                            Some(p) => PathBuf::from(p),
+                            None => {
+                                let p = e
+                                    .vfs
+                                    .content()
+                                    .staging_dir()
+                                    .join(format!("empty-{}", node.id.0));
+                                tokio::fs::create_dir_all(p.parent().unwrap()).await?;
+                                tokio::fs::write(&p, b"").await?;
+                                p
+                            }
+                        };
+                        e.import_and_upload(node.id, &src).await
+                    }
+                }
+            })
+            .await?;
+        Ok(self.info(n)?)
     }
 
-    // 右键动作
+    /// `modifyItem` 的内容变更。
+    pub async fn modify_contents(&self, id: u64, contents_path: String) -> Result<ItemInfo> {
+        let e = self.engine.clone();
+        let n = self
+            .run(async move {
+                e.import_and_upload(ItemId(id), std::path::Path::new(&contents_path))
+                    .await
+            })
+            .await?;
+        Ok(self.info(n)?)
+    }
+
+    /// `modifyItem` 的重命名 / 移动。
+    pub async fn rename(&self, id: u64, new_parent: u64, new_name: String) -> Result<ItemInfo> {
+        let e = self.engine.clone();
+        let n = self
+            .run(async move {
+                e.ensure_writable()?;
+                e.vfs
+                    .rename(ItemId(id), ItemId(new_parent), &new_name)
+                    .await
+            })
+            .await?;
+        Ok(self.info(n)?)
+    }
+
+    /// `deleteItem`。目录需为空（File Provider 会先递归删除子项）。
+    pub async fn delete(&self, id: u64) -> Result<()> {
+        let e = self.engine.clone();
+        self.run(async move {
+            e.ensure_writable()?;
+            e.vfs.delete(ItemId(id)).await
+        })
+        .await
+    }
+
+    // ---- 缓存控制（右键动作）----
+
+    /// 固定为始终缓存。只记录策略：File Provider 据 `contentPolicy` 由系统下载并保留。
     pub fn pin(&self, id: u64) -> Result<()> {
-        self.rt.block_on(self.engine.pin(ItemId(id)))
+        Ok(self
+            .engine
+            .set_policy_only(ItemId(id), Some(CachePolicy::Always))?)
     }
+
     pub fn unpin(&self, id: u64) -> Result<()> {
-        self.engine.unpin(ItemId(id))
-    }
-    pub fn evict(&self, id: u64) -> Result<()> {
-        self.rt.block_on(self.engine.evict(ItemId(id)))
+        Ok(self.engine.unpin(ItemId(id))?)
     }
 
-    /// 设置缓存策略；`policy_json` 为 `CachePolicy` 的 JSON，空串表示继承。
-    pub fn set_policy(&self, id: u64, policy_json: &str) -> Result<()> {
-        let policy = if policy_json.trim().is_empty() {
-            None
+    /// 设置缓存策略；`None` 表示继承。不预取（同 [`Session::pin`]）。
+    pub fn set_policy(&self, id: u64, policy: Option<CachePolicyFfi>) -> Result<()> {
+        Ok(self
+            .engine
+            .set_policy_only(ItemId(id), policy.map(Into::into))?)
+    }
+
+    /// 清理引擎侧的块缓存（系统持有的副本由 Swift 调 `evictItem` 处理）。
+    pub async fn evict_local(&self, id: u64) -> Result<()> {
+        let e = self.engine.clone();
+        self.run(async move { e.evict(ItemId(id)).await }).await
+    }
+
+    /// 引擎侧维护：块缓存的 TTL / 容量驱逐。`prefetch_pinned` 为真时还会把固定内容预取进块缓存
+    /// （File Provider 场景应传 false，内容由系统持有）。
+    pub async fn maintain(&self, prefetch_pinned: bool) -> Result<MaintainResult> {
+        let e = self.engine.clone();
+        let r = self
+            .run(async move {
+                if prefetch_pinned {
+                    e.maintain().await
+                } else {
+                    e.maintain_blocks().await
+                }
+            })
+            .await?;
+        Ok(MaintainResult {
+            ttl_evicted: r.ttl_evicted,
+            capacity_evicted: r.capacity_evicted,
+            bytes_freed: r.bytes_freed,
+            prefetched: r.prefetched,
+            cached_bytes: r.cached_bytes,
+        })
+    }
+
+    // ---- 系统持有副本（File Provider 已下载集合）----
+
+    /// `materializedItemsDidChange` 后由 Swift 传入系统当前的完整已下载集合。
+    pub fn sync_materialized(&self, ids: Vec<u64>) -> Result<()> {
+        let ids: Vec<ItemId> = ids.into_iter().map(ItemId).collect();
+        Ok(self.engine.vfs.meta().sync_materialized(&ids)?)
+    }
+
+    /// TTL 已到期、应调用 `NSFileProviderManager.evictItem` 的条目。
+    pub fn eviction_candidates(&self) -> Result<Vec<u64>> {
+        Ok(self
+            .engine
+            .eviction_candidates(SystemTime::now())?
+            .into_iter()
+            .map(|i| i.0)
+            .collect())
+    }
+
+    /// 系统驱逐成功后调用。
+    pub fn mark_evicted(&self, id: u64) -> Result<()> {
+        Ok(self.engine.vfs.meta().mark_evicted(ItemId(id))?)
+    }
+
+    /// 关闭会话：停止后台任务。之后的调用返回错误。
+    pub fn close(&self) {
+        if let Some(rt) = self.rt.lock().unwrap().take() {
+            rt.shutdown_background();
+        }
+    }
+}
+
+fn to_info(n: Node, pending_upload: bool, policy: CachePolicy) -> ItemInfo {
+    let content_version = n.cache_key();
+    let mtime_secs = n
+        .mtime
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    ItemInfo {
+        id: n.id.0,
+        parent: if n.id == ItemId::ROOT {
+            ItemId::ROOT.0
         } else {
-            Some(
-                serde_json::from_str(policy_json)
-                    .map_err(|e| ndisk_core::Error::Config(e.to_string()))?,
-            )
-        };
-        self.rt.block_on(self.engine.set_policy(ItemId(id), policy))
+            n.parent.0
+        },
+        metadata_version: format!("{}|{}|{}|{}", n.parent.0, n.name, mtime_secs, n.size),
+        name: n.name,
+        kind: match n.kind {
+            Kind::File => ItemKind::File,
+            Kind::Dir => ItemKind::Directory,
+        },
+        size: n.size,
+        mtime: n.mtime,
+        content_version,
+        state: match n.local {
+            LocalState::Cloud => ItemState::Cloud,
+            LocalState::Partial => ItemState::Partial,
+            LocalState::Cached => ItemState::Cached,
+            LocalState::Dirty => ItemState::Dirty,
+            LocalState::Uploading => ItemState::Uploading,
+            LocalState::Pinned => ItemState::Pinned,
+        },
+        effective_policy: policy.into(),
+        pending_upload,
     }
+}
 
-    /// 执行一次维护，返回 `MaintainReport` 的 JSON。
-    pub fn maintain(&self) -> Result<String> {
-        let r = self.rt.block_on(self.engine.maintain())?;
-        Ok(serde_json::to_string(&r).unwrap_or_default())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_config_roundtrip() {
+        let toml = render_s3_config(S3MountSpec {
+            id: "m1".into(),
+            display_name: "My Bucket".into(),
+            bucket: "b".into(),
+            prefix: "p/".into(),
+            region: Some("us-east-1".into()),
+            endpoint: Some("http://127.0.0.1:7070".into()),
+            force_path_style: true,
+            access_key_id: Some("AK".into()),
+            profile: None,
+            default_policy: CachePolicyFfi::Ttl { seconds: 3600 },
+            max_cache_bytes: Some(1 << 30),
+            proxy: None,
+            upload_limit: 0,
+            download_limit: 0,
+            read_only: false,
+        })
+        .unwrap();
+        let cfg = MountConfig::from_toml(&toml).unwrap();
+        assert_eq!(
+            cfg.cache.policy,
+            CachePolicy::Ttl(Duration::from_secs(3600))
+        );
+        match cfg.backend {
+            BackendConfig::S3(s) => {
+                assert!(
+                    matches!(s.auth, S3Auth::Static { ref secret_ref, .. } if secret_ref == "keychain:m1")
+                );
+                assert!(s.force_path_style);
+            }
+            _ => panic!(),
+        }
     }
 }

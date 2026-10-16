@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS blocks (
     PRIMARY KEY(item_id, etag, block_no)
 );
 CREATE INDEX IF NOT EXISTS blocks_last_used ON blocks(last_used);
+
+-- 由操作系统持有副本的已下载文件（macOS File Provider / Windows Cloud Files）。
+-- 这些平台上内容缓存由系统管理，引擎只记录下载时间并计算 TTL 到期的候选项。
+CREATE TABLE IF NOT EXISTS materialized (
+    item_id INTEGER PRIMARY KEY,
+    at      INTEGER NOT NULL
+);
 "#;
 
 pub struct MetaStore {
@@ -352,6 +359,55 @@ impl MetaStore {
             params![id.0],
         )?;
         Ok(())
+    }
+
+    // ---- materialized（系统持有副本）----
+
+    pub fn mark_materialized(&self, id: ItemId) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO materialized(item_id, at) VALUES (?1, ?2)",
+            params![id.0, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_evicted(&self, id: ItemId) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM materialized WHERE item_id = ?1", params![id.0])?;
+        Ok(())
+    }
+
+    /// 用系统报告的完整集合替换记录：新出现的记为现在下载，消失的删除。
+    pub fn sync_materialized(&self, ids: &[ItemId]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute_batch("CREATE TEMP TABLE IF NOT EXISTS mat_sync(item_id INTEGER PRIMARY KEY); DELETE FROM mat_sync;")?;
+        for id in ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO mat_sync(item_id) VALUES (?1)",
+                params![id.0],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM materialized WHERE item_id NOT IN (SELECT item_id FROM mat_sync)",
+            [],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO materialized(item_id, at) SELECT item_id, ?1 FROM mat_sync",
+            params![now()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn materialized_items(&self) -> Result<Vec<(ItemId, SystemTime)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT item_id, at FROM materialized ORDER BY at")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((ItemId(r.get::<_, i64>(0)? as u64), from_secs(r.get(1)?)))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ---- uploads ----

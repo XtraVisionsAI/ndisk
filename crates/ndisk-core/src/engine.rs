@@ -142,6 +142,75 @@ impl Engine {
         .await
     }
 
+    /// 把文件完整内容导出到 `dst`（File Provider `fetchContents`）。
+    ///
+    /// 有未上传的本地修改时导出脏文件。`keep_cache = false` 时导出后清掉块缓存：
+    /// 这类平台由系统持有副本，避免双份占用。导出成功即登记为"已下载"。
+    pub async fn export_to(
+        &self,
+        id: ItemId,
+        dst: &std::path::Path,
+        keep_cache: bool,
+    ) -> Result<Node> {
+        let n = self.stat(id)?;
+        if n.kind != Kind::File {
+            return Err(Error::IsADirectory(n.name));
+        }
+        if let Some(dir) = dst.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let dirty = self.vfs.content().dirty_path(id);
+        if dirty.exists() {
+            let _guard = self.writeback.lock(id).await;
+            tokio::fs::copy(&dirty, dst).await?;
+        } else {
+            let base = self.vfs.get(id)?;
+            self.download(id).await?;
+            self.vfs
+                .content()
+                .concat_blocks_to(id, &base.cache_key(), base.size, dst)
+                .await?;
+            if !keep_cache && self.effective_policy(id)? != CachePolicy::Always {
+                self.vfs.content().evict(id).await?;
+            }
+        }
+        self.vfs.meta().mark_materialized(id)?;
+        Ok(n)
+    }
+
+    /// 用外部文件替换内容并上传，返回上传后的节点（File Provider createItem / modifyItem）。
+    pub async fn import_and_upload(&self, id: ItemId, src: &std::path::Path) -> Result<Node> {
+        self.ensure_writable()?;
+        self.writeback.import(id, src).await?;
+        self.writeback.flush(id).await?;
+        self.stat(id)
+    }
+
+    /// 系统持有副本的平台：TTL 已到期、应当请求系统驱逐的文件。
+    /// TTL 从下载时刻起算；始终缓存与有未上传修改的文件不在其中。
+    pub fn eviction_candidates(&self, now: SystemTime) -> Result<Vec<ItemId>> {
+        let mut out = Vec::new();
+        for (id, at) in self.vfs.meta().materialized_items()? {
+            if self.vfs.meta().get(id)?.is_none() {
+                self.vfs.meta().mark_evicted(id)?;
+                continue;
+            }
+            if self.has_local_changes(id)? {
+                continue;
+            }
+            let age = now.duration_since(at).unwrap_or_default();
+            let expired = match self.effective_policy(id)? {
+                CachePolicy::Always => false,
+                CachePolicy::Ttl(d) => age > d,
+                CachePolicy::None => age > NONE_POLICY_GRACE,
+            };
+            if expired {
+                out.push(id);
+            }
+        }
+        Ok(out)
+    }
+
     // ---- 缓存控制（右键菜单 / CLI）----
 
     /// 固定为始终缓存。目录会递归固定当前已知的所有后代并下载。
@@ -159,13 +228,21 @@ impl Engine {
     }
 
     /// 设置节点的缓存策略覆盖；`None` 表示继承父目录或挂载默认值。
+    /// 设为 `Always` 时立即把内容预取到块缓存（FUSE / CLI 场景）。
     pub async fn set_policy(&self, id: ItemId, policy: Option<CachePolicy>) -> Result<()> {
         let always = matches!(policy, Some(CachePolicy::Always));
-        self.vfs.meta().set_policy(id, policy.as_ref())?;
-        self.vfs.meta().set_pinned(id, always)?;
+        self.set_policy_only(id, policy)?;
         if always {
             self.prefetch_tree(id, true).await?;
         }
+        Ok(())
+    }
+
+    /// 只记录策略，不预取。系统持有副本的平台（File Provider）由系统按 `contentPolicy` 下载。
+    pub fn set_policy_only(&self, id: ItemId, policy: Option<CachePolicy>) -> Result<()> {
+        let always = matches!(policy, Some(CachePolicy::Always));
+        self.vfs.meta().set_policy(id, policy.as_ref())?;
+        self.vfs.meta().set_pinned(id, always)?;
         Ok(())
     }
 
@@ -241,6 +318,11 @@ impl Engine {
         self.maintain_at(SystemTime::now()).await
     }
 
+    /// 不做固定预取的维护（系统持有副本的平台使用）。
+    pub async fn maintain_blocks(&self) -> Result<MaintainReport> {
+        self.maintain_inner(SystemTime::now(), false).await
+    }
+
     /// 以给定"当前时间"执行一次维护（便于测试）：
     /// 1. TTL：生效策略为 `Ttl(d)` 且最近访问早于 `now - d` 的文件整体驱逐；`None` 策略使用短宽限期；
     /// 2. 容量：剩余占用仍超过 `max_bytes` 时按 LRU 驱逐未受保护的文件；
@@ -248,6 +330,14 @@ impl Engine {
     ///
     /// 始终缓存的文件、有未上传修改的文件不会被驱逐。
     pub async fn maintain_at(&self, now: SystemTime) -> Result<MaintainReport> {
+        self.maintain_inner(now, true).await
+    }
+
+    async fn maintain_inner(
+        &self,
+        now: SystemTime,
+        prefetch_pinned: bool,
+    ) -> Result<MaintainReport> {
         let mut report = MaintainReport::default();
         let mut remaining = Vec::new();
         for item in self.vfs.meta().cached_items()? {
@@ -285,7 +375,12 @@ impl Engine {
             report.bytes_freed += item.bytes;
         }
 
-        for id in self.vfs.meta().pinned_items()? {
+        let pinned = if prefetch_pinned {
+            self.vfs.meta().pinned_items()?
+        } else {
+            Vec::new()
+        };
+        for id in pinned {
             match self.prefetch_tree(id, true).await {
                 Ok(n) => report.prefetched += n,
                 Err(e) => tracing::warn!(item = id.0, error = %e, "prefetch of pinned item failed"),

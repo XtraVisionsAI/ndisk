@@ -557,3 +557,55 @@ async fn futures_join(e: &Engine, names: &[&str]) -> Vec<ItemId> {
     }
     out
 }
+
+#[tokio::test]
+async fn system_owned_copies_export_import_and_ttl_candidates() {
+    let mem = Arc::new(Mem::default());
+    let body: Vec<u8> = (0..5000u32).map(|i| (i % 13) as u8).collect();
+    mem.put("data/f.bin", Bytes::from(body.clone()), Default::default())
+        .await
+        .unwrap();
+    mem.put("data/k/g.bin", Bytes::from_static(b"g"), Default::default())
+        .await
+        .unwrap();
+    let (e, d) = setup_with(mem.clone(), config_with(1024, CachePolicy::Ttl(H), 1 << 40));
+    let f = resolve(&e, "f.bin").await;
+    let k = resolve(&e, "k").await;
+    let g = resolve(&e, "k/g.bin").await;
+
+    // 导出：内容正确，且导出后块缓存被清掉（系统持有副本）
+    let out = d.path.join("export/f.bin");
+    e.export_to(f, &out, false).await.unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), body);
+    assert_eq!(e.vfs.get(f).unwrap().local, LocalState::Cloud);
+    e.pin(k).await.unwrap();
+    e.export_to(g, &d.path.join("export/g.bin"), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        e.vfs.get(g).unwrap().local,
+        LocalState::Cached,
+        "pinned content keeps its blocks"
+    );
+
+    // TTL 候选：1 小时后 f 到期，固定目录下的 g 不到期
+    let now = SystemTime::now();
+    assert!(e.eviction_candidates(now).unwrap().is_empty());
+    assert_eq!(e.eviction_candidates(now + 2 * H).unwrap(), vec![f]);
+    // 系统报告的集合中没有 f（已被系统驱逐）
+    e.vfs.meta().sync_materialized(&[g]).unwrap();
+    assert!(e.eviction_candidates(now + 2 * H).unwrap().is_empty());
+
+    // 导入：用外部文件替换内容并上传
+    let src = d.path.join("new.txt");
+    std::fs::write(&src, b"replaced").unwrap();
+    let n = e.import_and_upload(f, &src).await.unwrap();
+    assert_eq!(n.size, 8);
+    assert_eq!(
+        &mem.objects.lock().unwrap()["data/f.bin"].0[..],
+        b"replaced"
+    );
+    let out2 = d.path.join("export/f2.bin");
+    e.export_to(f, &out2, false).await.unwrap();
+    assert_eq!(std::fs::read(&out2).unwrap(), b"replaced");
+}
