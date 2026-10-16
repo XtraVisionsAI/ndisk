@@ -1789,6 +1789,7 @@ dependencies = [
  "aws-smithy-types",
  "bytes",
  "ndisk-core",
+ "serde_json",
  "tokio",
  "tracing",
 ]

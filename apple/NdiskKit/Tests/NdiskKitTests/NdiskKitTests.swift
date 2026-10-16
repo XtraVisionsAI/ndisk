@@ -31,7 +31,8 @@ final class NdiskKitTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let toml = try renderS3Config(spec: Self.spec(endpoint: endpoint))
-        let s = try await openSession(configToml: toml, cacheRoot: tmp.appendingPathComponent("cache").path, secret: "testsecret")
+        let s = try await openSession(configToml: toml, dataDir: tmp.appendingPathComponent("data").path,
+                                      cacheDir: tmp.appendingPathComponent("cache").path, secret: "testsecret")
         defer { s.close() }
 
         // 创建目录与文件

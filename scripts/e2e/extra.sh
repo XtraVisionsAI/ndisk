@@ -29,23 +29,23 @@ fusermount3 -u $MNT; wait $MPID
 # ---- 3: HTTP 代理 ----
 rm -f /tmp/proxy.log; python3 /test/proxy.py 3128 /tmp/proxy.log & PPID_=$!; sleep 0.5
 sed 's/^\[cache\]/[network]\nproxy = "http:\/\/u:p@127.0.0.1:3128"\n\n[cache]/' /test/cfg.toml > /test/cfg-proxy.toml
-rm -rf /tmp/xp; $BIN -c /test/cfg-proxy.toml --cache-dir /tmp/xp ls / > /tmp/xp.ls 2>&1
+rm -rf /tmp/xp; $BIN -c /test/cfg-proxy.toml --cache-dir /tmp/xp --data-dir /tmp/xp/data ls / > /tmp/xp.ls 2>&1
 grep -q moved.bin /tmp/xp.ls; check $? "ls via HTTP proxy"
-rm -rf /tmp/xp; [ "$($BIN -c /test/cfg-proxy.toml --cache-dir /tmp/xp cat '/重命名 后.txt' 2>/dev/null)" = "你好 世界" ]; check $? "cat via HTTP proxy"
+rm -rf /tmp/xp; [ "$($BIN -c /test/cfg-proxy.toml --cache-dir /tmp/xp --data-dir /tmp/xp/data cat '/重命名 后.txt' 2>/dev/null)" = "你好 世界" ]; check $? "cat via HTTP proxy"
 [ "$(grep -c ndisk-s3:7070 /tmp/proxy.log)" -ge 2 ]; check $? "requests observed at proxy ($(wc -l < /tmp/proxy.log) logged)"
 kill $PPID_ 2>/dev/null
 sed 's/^\[cache\]/[network]\nproxy = "http:\/\/127.0.0.1:3999"\n\n[cache]/' /test/cfg.toml > /test/cfg-deadproxy.toml
-rm -rf /tmp/xp; timeout 60 $BIN -c /test/cfg-deadproxy.toml --cache-dir /tmp/xp ls / > /dev/null 2>&1; [ $? -ne 0 ]; check $? "dead proxy makes requests fail (traffic really goes through proxy)"
+rm -rf /tmp/xp; timeout 60 $BIN -c /test/cfg-deadproxy.toml --cache-dir /tmp/xp --data-dir /tmp/xp/data ls / > /dev/null 2>&1; [ $? -ne 0 ]; check $? "dead proxy makes requests fail (traffic really goes through proxy)"
 
 # ---- 4: 缓存策略与 TTL 回收 ----
 C=/tmp/xg; rm -rf $C
-$BIN -c /test/cfg.toml --cache-dir $C cache download /moved.bin; check $? "cache download"
-$BIN -c /test/cfg.toml --cache-dir $C ls / | grep moved.bin | grep -q cached; check $? "ls shows cached"
-$BIN -c /test/cfg.toml --cache-dir $C cache policy / ttl:1 | grep -q "Ttl(1s)"; check $? "set root policy ttl:1"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data cache download /moved.bin; check $? "cache download"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data ls / | grep moved.bin | grep -q cached; check $? "ls shows cached"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data cache policy / ttl:1 | grep -q "Ttl(1s)"; check $? "set root policy ttl:1"
 sleep 2.5
-$BIN -c /test/cfg.toml --cache-dir $C cache gc > /tmp/gc.json; grep -q '"ttl_evicted": [1-9]' /tmp/gc.json; check $? "gc evicts expired file ($(tr -d '\n ' < /tmp/gc.json))"
-$BIN -c /test/cfg.toml --cache-dir $C ls / | grep moved.bin | grep -q cloud; check $? "ls shows cloud after gc"
-$BIN -c /test/cfg.toml --cache-dir $C cache pin /moved.bin && sleep 2.5
-$BIN -c /test/cfg.toml --cache-dir $C cache gc > /tmp/gc2.json; grep -q '"ttl_evicted": 0' /tmp/gc2.json; check $? "pinned file survives gc"
-$BIN -c /test/cfg.toml --cache-dir $C ls / | grep moved.bin | grep -q pinned; check $? "ls shows pinned"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data cache gc > /tmp/gc.json; grep -q '"ttl_evicted": [1-9]' /tmp/gc.json; check $? "gc evicts expired file ($(tr -d '\n ' < /tmp/gc.json))"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data ls / | grep moved.bin | grep -q cloud; check $? "ls shows cloud after gc"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data cache pin /moved.bin && sleep 2.5
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data cache gc > /tmp/gc2.json; grep -q '"ttl_evicted": 0' /tmp/gc2.json; check $? "pinned file survives gc"
+$BIN -c /test/cfg.toml --cache-dir $C --data-dir $C/data ls / | grep moved.bin | grep -q pinned; check $? "ls shows pinned"
 exit $fail

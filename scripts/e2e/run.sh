@@ -11,7 +11,7 @@ fail=0
 check() { if [ "$1" = "0" ]; then echo "PASS: $2"; else echo "FAIL: $2"; fail=1; fi; }
 
 fusermount3 -u $MNT 2>/dev/null; rm -rf $CACHE $MNT; mkdir -p $MNT $CACHE
-$BIN -c $CFG --cache-dir $CACHE mount $MNT > /test/mount.log 2>&1 &
+$BIN -c $CFG --cache-dir $CACHE --data-dir $CACHE/data mount $MNT > /test/mount.log 2>&1 &
 MPID=$!
 for i in $(seq 1 30); do mountpoint -q $MNT && break; sleep 0.2; done
 mountpoint -q $MNT; check $? "mounted"
@@ -58,8 +58,8 @@ ls $MNT > /dev/null; [ "$(cat $MNT/ext.txt 2>/dev/null)" = "external" ]; check $
 # 7. 卸载并用新缓存目录重新挂载读取
 fusermount3 -u $MNT; wait $MPID; check $? "unmount clean exit"
 rm -rf $CACHE; mkdir -p $CACHE
-$BIN -c $CFG --cache-dir $CACHE ls / > /test/ls2.txt 2>&1; grep -q ext.txt /test/ls2.txt; check $? "fresh engine lists remote"
-$BIN -c $CFG --cache-dir $CACHE status > /test/status.txt 2>&1; check $? "status"
+$BIN -c $CFG --cache-dir $CACHE --data-dir $CACHE/data ls / > /test/ls2.txt 2>&1; grep -q ext.txt /test/ls2.txt; check $? "fresh engine lists remote"
+$BIN -c $CFG --cache-dir $CACHE --data-dir $CACHE/data status > /test/status.txt 2>&1; check $? "status"
 echo "---- status ----"; cat /test/status.txt
 echo "---- mount.log (errors/warnings) ----"; grep -E "WARN|ERROR" /test/mount.log | head -20
 exit $fail

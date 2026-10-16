@@ -15,18 +15,29 @@ use crate::cache::meta::MetaStore;
 use crate::types::*;
 use crate::Result;
 
+/// 布局遵循各系统惯例，分两个根：
+/// - `cache_root`（可被系统清理，如 macOS `Library/Caches`）：`blocks/`、`staging/`，丢了可重新下载；
+/// - `data_root`（持久，如 `Library/Application Support`）：`dirty/`，未上传的修改绝不能丢。
 pub struct ContentCache {
     root: PathBuf,
+    data_root: PathBuf,
     block_size: u64,
     meta: Arc<MetaStore>,
 }
 
 impl ContentCache {
-    pub fn new(root: PathBuf, block_size: u64, meta: Arc<MetaStore>) -> Result<Self> {
-        std::fs::create_dir_all(root.join("blocks"))?;
-        std::fs::create_dir_all(root.join("dirty"))?;
+    pub fn new(
+        cache_root: PathBuf,
+        data_root: PathBuf,
+        block_size: u64,
+        meta: Arc<MetaStore>,
+    ) -> Result<Self> {
+        std::fs::create_dir_all(cache_root.join("blocks"))?;
+        std::fs::create_dir_all(cache_root.join("staging"))?;
+        std::fs::create_dir_all(data_root.join("dirty"))?;
         Ok(Self {
-            root,
+            root: cache_root,
+            data_root,
             block_size,
             meta,
         })
@@ -58,7 +69,7 @@ impl ContentCache {
     }
 
     pub fn dirty_path(&self, id: ItemId) -> PathBuf {
-        self.root.join("dirty").join(id.0.to_string())
+        self.data_root.join("dirty").join(id.0.to_string())
     }
 
     pub fn has_block(&self, id: ItemId, etag: &str, block_no: u64) -> bool {

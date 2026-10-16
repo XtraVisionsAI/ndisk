@@ -244,7 +244,13 @@ fn config_with(block_size: u64, policy: CachePolicy, max_bytes: u64) -> MountCon
 
 fn setup(mem: Arc<Mem>, block_size: u64) -> (Engine, tempdir::Dir) {
     let dir = tempdir::Dir::new();
-    let e = Engine::open(config(block_size), mem, dir.path.clone()).unwrap();
+    let e = Engine::open(
+        config(block_size),
+        mem,
+        dir.path.join("data"),
+        dir.path.join("cache"),
+    )
+    .unwrap();
     (e, dir)
 }
 
@@ -398,7 +404,7 @@ async fn rename_and_delete_keep_item_id() {
 
 fn setup_with(mem: Arc<Mem>, cfg: MountConfig) -> (Engine, tempdir::Dir) {
     let dir = tempdir::Dir::new();
-    let e = Engine::open(cfg, mem, dir.path.clone()).unwrap();
+    let e = Engine::open(cfg, mem, dir.path.join("data"), dir.path.join("cache")).unwrap();
     (e, dir)
 }
 

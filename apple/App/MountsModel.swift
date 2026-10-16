@@ -87,7 +87,8 @@ final class MountsModel: ObservableObject {
         defer { try? FileManager.default.removeItem(at: tmp) }
         do {
             let toml = try renderS3Config(spec: spec)
-            let s = try await openSession(configToml: toml, cacheRoot: tmp.path, secret: secret)
+            let s = try await openSession(configToml: toml, dataDir: tmp.appendingPathComponent("data").path,
+                                          cacheDir: tmp.appendingPathComponent("cache").path, secret: secret)
             defer { s.close() }
             return .success(try await s.list(dir: NdiskIdentifier.rootId, force: true).count)
         } catch {

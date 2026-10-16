@@ -1,11 +1,13 @@
 import Foundation
 import Security
 
-/// App 与扩展共享的存储布局（位于 App Group 容器内）：
+/// App 与扩展共享的存储布局（位于 App Group 容器内，遵循 macOS 惯例）：
 ///
-///     <group>/mounts.json             已登记的挂载列表
-///     <group>/mounts/<id>.toml        每个挂载的配置（由 Rust `renderS3Config` 生成）
-///     <group>/cache/<id>/             每个挂载的引擎缓存（SQLite + 块缓存 + staging）
+///     <group>/Library/Application Support/ndisk/mounts.json       已登记的挂载列表
+///     <group>/Library/Application Support/ndisk/mounts/<id>.toml  每个挂载的配置
+///     <group>/Library/Application Support/ndisk/data/<id>/        元数据库、未上传文件（持久）
+///     <group>/Library/Application Support/ndisk/status/<id>.json  扩展写出的状态
+///     <group>/Library/Caches/ndisk/<id>/                          块缓存与导出暂存（系统可清理）
 ///
 /// 密钥存放在共享钥匙串访问组中，配置文件里只有引用名 `keychain:<id>`。
 public struct SharedStore: Sendable {
@@ -47,11 +49,15 @@ public struct SharedStore: Sendable {
         }
     }
 
-    var mountsFile: URL { root.appendingPathComponent("mounts.json") }
-    public func configURL(_ id: String) -> URL { root.appendingPathComponent("mounts/\(id).toml") }
-    public func cacheURL(_ id: String) -> URL { root.appendingPathComponent("cache/\(id)", isDirectory: true) }
+    var supportDir: URL { root.appendingPathComponent("Library/Application Support/ndisk", isDirectory: true) }
+    var cachesDir: URL { root.appendingPathComponent("Library/Caches/ndisk", isDirectory: true) }
+    var mountsFile: URL { supportDir.appendingPathComponent("mounts.json") }
+    public func configURL(_ id: String) -> URL { supportDir.appendingPathComponent("mounts/\(id).toml") }
+    public func dataURL(_ id: String) -> URL { supportDir.appendingPathComponent("data/\(id)", isDirectory: true) }
+    public func cacheURL(_ id: String) -> URL { cachesDir.appendingPathComponent(id, isDirectory: true) }
 
     public func mounts() -> [Mount] {
+        migrateLegacyLayout()
         guard let data = try? Data(contentsOf: mountsFile) else { return [] }
         return (try? JSONDecoder().decode([Mount].self, from: data)) ?? []
     }
@@ -61,6 +67,7 @@ public struct SharedStore: Sendable {
         try fm.createDirectory(at: configURL(mount.id).deletingLastPathComponent(), withIntermediateDirectories: true)
         try configToml.write(to: configURL(mount.id), atomically: true, encoding: .utf8)
         if let secret, !secret.isEmpty { try setSecret(secret, for: mount.id) }
+        try fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
         var all = mounts().filter { $0.id != mount.id }
         all.append(mount)
         try JSONEncoder().encode(all).write(to: mountsFile, options: .atomic)
@@ -71,15 +78,46 @@ public struct SharedStore: Sendable {
         try JSONEncoder().encode(all).write(to: mountsFile, options: .atomic)
         try? FileManager.default.removeItem(at: configURL(mountId))
         try? FileManager.default.removeItem(at: cacheURL(mountId))
+        try? FileManager.default.removeItem(at: dataURL(mountId))
         try? FileManager.default.removeItem(at: statusURL(mountId))
         deleteSecret(for: mountId)
     }
 
+    /// 旧布局（<group>/mounts*, <group>/cache/<id>）一次性迁移到新布局。开发期产物，可在首个正式版后删除。
+    func migrateLegacyLayout() {
+        let fm = FileManager.default
+        let oldMounts = root.appendingPathComponent("mounts.json")
+        if fm.fileExists(atPath: oldMounts.path), !fm.fileExists(atPath: mountsFile.path) {
+            try? fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
+            try? fm.moveItem(at: oldMounts, to: mountsFile)
+            try? fm.moveItem(at: root.appendingPathComponent("mounts"), to: supportDir.appendingPathComponent("mounts"))
+            try? fm.moveItem(at: root.appendingPathComponent("status"), to: supportDir.appendingPathComponent("status"))
+        }
+        let oldCache = root.appendingPathComponent("cache")
+        guard let ids = try? fm.contentsOfDirectory(atPath: oldCache.path) else { return }
+        for id in ids where !fm.fileExists(atPath: dataURL(id).path) {
+            let old = oldCache.appendingPathComponent(id)
+            try? fm.createDirectory(at: dataURL(id), withIntermediateDirectories: true)
+            try? fm.createDirectory(at: cacheURL(id), withIntermediateDirectories: true)
+            for f in ["meta.sqlite", "meta.sqlite-wal", "meta.sqlite-shm", "dirty"] {
+                try? fm.moveItem(at: old.appendingPathComponent(f), to: dataURL(id).appendingPathComponent(f))
+            }
+            for f in ["blocks", "staging"] {
+                try? fm.moveItem(at: old.appendingPathComponent(f), to: cacheURL(id).appendingPathComponent(f))
+            }
+            try? fm.removeItem(at: old)
+        }
+        try? fm.removeItem(at: oldCache)
+    }
+
     /// 打开挂载会话（扩展与 App 都可调用）。
     public func openSession(mountId: String) async throws -> Session {
+        migrateLegacyLayout()
         let toml = try String(contentsOf: configURL(mountId), encoding: .utf8)
+        try FileManager.default.createDirectory(at: dataURL(mountId), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cacheURL(mountId), withIntermediateDirectories: true)
-        return try await NdiskKit.openSession(configToml: toml, cacheRoot: cacheURL(mountId).path, secret: secret(for: mountId))
+        return try await NdiskKit.openSession(configToml: toml, dataDir: dataURL(mountId).path,
+                                              cacheDir: cacheURL(mountId).path, secret: secret(for: mountId))
     }
 
     // MARK: 状态文件（扩展写、App 读）
@@ -102,7 +140,7 @@ public struct SharedStore: Sendable {
         }
     }
 
-    public func statusURL(_ id: String) -> URL { root.appendingPathComponent("status/\(id).json") }
+    public func statusURL(_ id: String) -> URL { supportDir.appendingPathComponent("status/\(id).json") }
 
     public func writeStatus(_ st: MountStatus) throws {
         try FileManager.default.createDirectory(at: statusURL(st.mountId).deletingLastPathComponent(), withIntermediateDirectories: true)

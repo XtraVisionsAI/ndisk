@@ -24,12 +24,20 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// `cache_root` 为该挂载点专用目录（平台层负责决定位置）。
-    pub fn open(cfg: MountConfig, backend: DynBackend, cache_root: PathBuf) -> Result<Self> {
+    /// `data_dir`：持久数据（元数据库、未上传文件）；`cache_dir`：可重建的块缓存。
+    /// 两者都是该挂载点专用目录，位置由平台层按系统惯例决定。
+    pub fn open(
+        cfg: MountConfig,
+        backend: DynBackend,
+        data_dir: PathBuf,
+        cache_dir: PathBuf,
+    ) -> Result<Self> {
         cfg.validate()?;
-        let meta = Arc::new(MetaStore::open(&cache_root.join("meta.sqlite"))?);
+        std::fs::create_dir_all(&data_dir)?;
+        let meta = Arc::new(MetaStore::open(&data_dir.join("meta.sqlite"))?);
         let content = Arc::new(ContentCache::new(
-            cache_root,
+            cache_dir,
+            data_dir,
             cfg.cache.block_size,
             meta.clone(),
         )?);

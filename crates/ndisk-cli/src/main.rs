@@ -21,9 +21,12 @@ struct Cli {
     /// 挂载配置文件（TOML）。
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
-    /// 缓存根目录，默认 ~/.cache/ndisk/<mount id>。
+    /// 块缓存目录（可清理）。默认按系统惯例：Linux $XDG_CACHE_HOME/ndisk/<id>，macOS ~/Library/Caches/ndisk/<id>。
     #[arg(long, global = true)]
     cache_dir: Option<PathBuf>,
+    /// 持久数据目录（元数据库、未上传文件）。默认 Linux $XDG_DATA_HOME/ndisk/<id>，macOS ~/Library/Application Support/ndisk/<id>。
+    #[arg(long, global = true)]
+    data_dir: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -106,8 +109,8 @@ async fn main() -> Result<()> {
 
     let cfg_path = cli.config.context("--config is required")?;
     let cfg = MountConfig::from_toml(&std::fs::read_to_string(&cfg_path)?)?;
-    let cache_root = cli.cache_dir.unwrap_or_else(|| default_cache_dir(&cfg.id));
-    let engine = Arc::new(open_engine(&cfg, cache_root).await?);
+    let dirs = AppDirs::resolve(&cfg.id, cli.data_dir, cli.cache_dir);
+    let engine = Arc::new(open_engine(&cfg, dirs).await?);
 
     match cli.cmd {
         Cmd::Mount {
@@ -222,7 +225,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn open_engine(cfg: &MountConfig, cache_root: PathBuf) -> Result<Engine> {
+async fn open_engine(cfg: &MountConfig, dirs: AppDirs) -> Result<Engine> {
     let backend: Arc<dyn ndisk_core::Backend> = match &cfg.backend {
         BackendConfig::S3(s3) => {
             // 骨架阶段：静态密钥从环境变量 NDISK_S3_SECRET 读取；正式版走系统凭据库。
@@ -236,7 +239,7 @@ async fn open_engine(cfg: &MountConfig, cache_root: PathBuf) -> Result<Engine> {
             anyhow::bail!("backend '{scheme}' not implemented yet")
         }
     };
-    Ok(Engine::open(cfg.clone(), backend, cache_root)?)
+    Ok(Engine::open(cfg.clone(), backend, dirs.data, dirs.cache)?)
 }
 
 async fn resolve(engine: &Engine, path: &str) -> Result<ItemId> {
@@ -247,12 +250,47 @@ async fn resolve(engine: &Engine, path: &str) -> Result<ItemId> {
     Ok(id)
 }
 
-fn default_cache_dir(mount_id: &str) -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("ndisk").join(mount_id)
+/// 按系统惯例确定的目录。
+struct AppDirs {
+    data: PathBuf,
+    cache: PathBuf,
+}
+
+impl AppDirs {
+    fn resolve(mount_id: &str, data: Option<PathBuf>, cache: Option<PathBuf>) -> Self {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let (data_base, cache_base) = if cfg!(target_os = "macos") {
+            (
+                home.join("Library/Application Support"),
+                home.join("Library/Caches"),
+            )
+        } else if cfg!(windows) {
+            (
+                std::env::var_os("APPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.clone()),
+                std::env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.clone())
+                    .join("cache"),
+            )
+        } else {
+            (
+                std::env::var_os("XDG_DATA_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".local/share")),
+                std::env::var_os("XDG_CACHE_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".cache")),
+            )
+        };
+        Self {
+            data: data.unwrap_or_else(|| data_base.join("ndisk").join(mount_id)),
+            cache: cache.unwrap_or_else(|| cache_base.join("ndisk").join(mount_id)),
+        }
+    }
 }
 
 fn template() -> Result<MountConfig> {

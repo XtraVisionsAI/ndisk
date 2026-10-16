@@ -70,10 +70,16 @@ pub enum S3Auth {
     Profile {
         name: String,
     },
+    /// 通过 STS AssumeRole 获取临时凭据，SDK 自动刷新。
+    /// `access_key_id` 为 `Some` 时以静态密钥（钥匙串）为源凭据，否则用默认凭据链。
     AssumeRole {
         role_arn: String,
         session_name: Option<String>,
         external_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        access_key_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_ref: Option<String>,
     },
     Sso {
         profile: String,

@@ -259,11 +259,13 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// 打开一个挂载会话。`secret` 为静态密钥时从钥匙串取出的 Secret Access Key。
+/// 打开一个挂载会话。`data_dir` 放元数据库与未上传文件（持久），`cache_dir` 放块缓存（可清理）。
+/// `secret` 为钥匙串中的密钥：纯 Secret Access Key，或含 session_token 的 JSON。
 #[uniffi::export]
 pub async fn open_session(
     config_toml: String,
-    cache_root: String,
+    data_dir: String,
+    cache_dir: String,
     secret: Option<String>,
 ) -> Result<Arc<Session>> {
     let cfg = MountConfig::from_toml(&config_toml)?;
@@ -275,7 +277,8 @@ pub async fn open_session(
         .map_err(|e| NdiskError::Other {
             message: e.to_string(),
         })?;
-    let cache_root = PathBuf::from(cache_root);
+    let data_dir = PathBuf::from(data_dir);
+    let cache_dir = PathBuf::from(cache_dir);
     let engine = rt
         .spawn(async move {
             let backend: Arc<dyn ndisk_core::Backend> = match &cfg.backend {
@@ -289,7 +292,7 @@ pub async fn open_session(
                     )))
                 }
             };
-            let engine = Arc::new(Engine::open(cfg, backend, cache_root)?);
+            let engine = Arc::new(Engine::open(cfg, backend, data_dir, cache_dir)?);
             engine.resume_uploads().await?;
             Ok::<_, ndisk_core::Error>(engine)
         })

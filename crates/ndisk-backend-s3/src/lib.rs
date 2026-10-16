@@ -50,22 +50,17 @@ impl S3Backend {
         loader = match &cfg.auth {
             S3Auth::Default => loader,
             S3Auth::Static { access_key_id, .. } => {
-                let secret = secret
-                    .ok_or_else(|| Error::Config("missing secret for static credentials".into()))?;
-                loader.credentials_provider(aws_credential_types::Credentials::new(
-                    access_key_id,
-                    secret,
-                    None,
-                    None,
-                    "ndisk",
-                ))
+                loader.credentials_provider(static_credentials(access_key_id, secret.as_deref())?)
             }
             S3Auth::Profile { name } | S3Auth::Sso { profile: name } => loader.profile_name(name),
             S3Auth::AssumeRole {
                 role_arn,
                 session_name,
                 external_id,
+                access_key_id,
+                ..
             } => {
+                // 用 SDK 的 AssumeRoleProvider：临时凭据到期前自动刷新。
                 let mut base = aws_config::defaults(aws_config::BehaviorVersion::latest());
                 if let Some(c) = &http_client {
                     base = base.http_client(c.clone());
@@ -74,25 +69,20 @@ impl S3Backend {
                     base = base.region(aws_config::Region::new(r.clone()));
                 }
                 let base = base.load().await;
-                let sts = aws_sdk_sts::Client::new(&base);
-                let mut req = sts
-                    .assume_role()
-                    .role_arn(role_arn)
-                    .role_session_name(session_name.clone().unwrap_or_else(|| "ndisk".into()));
+                let mut b = aws_config::sts::AssumeRoleProvider::builder(role_arn)
+                    .session_name(session_name.clone().unwrap_or_else(|| "ndisk".into()))
+                    .configure(&base);
                 if let Some(e) = external_id {
-                    req = req.external_id(e);
+                    b = b.external_id(e);
                 }
-                let out = req.send().await.map_err(sdk_err)?;
-                let c = out
-                    .credentials()
-                    .ok_or_else(|| Error::Config("STS returned no credentials".into()))?;
-                loader.credentials_provider(aws_credential_types::Credentials::new(
-                    c.access_key_id(),
-                    c.secret_access_key(),
-                    Some(c.session_token().to_string()),
-                    Some(UNIX_EPOCH + Duration::from_secs(c.expiration().secs().max(0) as u64)),
-                    "ndisk-sts",
-                ))
+                let provider = match access_key_id {
+                    Some(ak) => {
+                        b.build_from_provider(static_credentials(ak, secret.as_deref())?)
+                            .await
+                    }
+                    None => b.build().await,
+                };
+                loader.credentials_provider(provider)
             }
             S3Auth::WebIdentity { .. } => {
                 // aws-config 通过 AWS_ROLE_ARN / AWS_WEB_IDENTITY_TOKEN_FILE 环境变量支持；
@@ -711,6 +701,36 @@ impl Backend for S3Backend {
             })
         }
     }
+}
+
+/// 静态凭据。`secret` 可以是纯 Secret Access Key，也可以是 JSON `{"secret_access_key":..,"session_token":..}`
+/// （临时凭据场景，由平台层存入钥匙串）。
+fn static_credentials(
+    access_key_id: &str,
+    secret: Option<&str>,
+) -> Result<aws_credential_types::Credentials> {
+    let secret = secret
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::Config("missing secret for static credentials".into()))?;
+    let (sak, token) = if secret.starts_with('{') {
+        let v: serde_json::Value = serde_json::from_str(secret)
+            .map_err(|e| Error::Config(format!("bad secret json: {e}")))?;
+        let sak = v["secret_access_key"]
+            .as_str()
+            .ok_or_else(|| Error::Config("secret json lacks secret_access_key".into()))?
+            .to_string();
+        (sak, v["session_token"].as_str().map(str::to_string))
+    } else {
+        (secret.to_string(), None)
+    };
+    Ok(aws_credential_types::Credentials::new(
+        access_key_id,
+        sak,
+        token,
+        None,
+        "ndisk",
+    ))
 }
 
 /// 用 HeadBucket 探测 Bucket 实际区域。返回 `Ok(None)` 表示区域已正确或无法判断（交给后续请求报错）。
