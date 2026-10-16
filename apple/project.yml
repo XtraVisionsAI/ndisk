@@ -24,6 +24,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(NDISK_BUNDLE_PREFIX)
         PRODUCT_NAME: NDisk
         INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: App/NDisk.entitlements
         GENERATE_INFOPLIST_FILE: NO
     dependencies:

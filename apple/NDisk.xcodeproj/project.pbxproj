@@ -14,6 +14,7 @@
 		6B3E650EE7EFD539F8402030 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 75A0D1C83F997E594D0C5ED4 /* NdiskKit */; };
 		794090EF6CAB89E2256DEEC1 /* AddMountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628D9507BC069575CAB86100 /* AddMountView.swift */; };
 		7AD8CFE04A40A5BAADF2E9CA /* MountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFA7A63883209936D438B34 /* MountsModel.swift */; };
+		7F1C760E013E474D5B9A3C6D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93B1DD5CA23D03297A119BC1 /* Assets.xcassets */; };
 		DDED06EDC0DD0D0C5EE7C909 /* PinnedBadge.icns in Resources */ = {isa = PBXBuildFile; fileRef = CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */; };
 		EE272EBD480766DED360DCE9 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B88564D1C72681750AFF99 /* FileProviderItem.swift */; };
 		FFC3BA23E5CBF128403D781A /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */; };
@@ -49,6 +50,7 @@
 		628D9507BC069575CAB86100 /* AddMountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddMountView.swift; sourceTree = "<group>"; };
 		6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NDiskFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6E772CE1E3EADD76A3797810 /* NdiskKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = NdiskKit; path = NdiskKit; sourceTree = SOURCE_ROOT; };
+		93B1DD5CA23D03297A119BC1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A7B88564D1C72681750AFF99 /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
 		ADFA7A63883209936D438B34 /* MountsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountsModel.swift; sourceTree = "<group>"; };
 		C5C21F9AFAF99751F2E66B50 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
@@ -81,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				628D9507BC069575CAB86100 /* AddMountView.swift */,
+				93B1DD5CA23D03297A119BC1 /* Assets.xcassets */,
 				ADFA7A63883209936D438B34 /* MountsModel.swift */,
 				D8794B057EC839A67B928A5B /* NDiskApp.swift */,
 			);
@@ -170,6 +173,7 @@
 			buildConfigurationList = 6536CF7EB458FEE79716A88C /* Build configuration list for PBXNativeTarget "NDisk" */;
 			buildPhases = (
 				0D8AF331EE2C6798B80C69BB /* Sources */,
+				20BC3CD01D106443EC110793 /* Resources */,
 				079ACF06250D3E9A1052050C /* Frameworks */,
 				8E1464C13431AEC4A805EF48 /* Embed Foundation Extensions */,
 			);
@@ -229,6 +233,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		20BC3CD01D106443EC110793 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7F1C760E013E474D5B9A3C6D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		6D9BA0B146469FDD2B167510 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
