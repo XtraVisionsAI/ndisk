@@ -82,7 +82,7 @@ impl S3Backend {
                 if let Some(e) = external_id {
                     req = req.external_id(e);
                 }
-                let out = req.send().await.map_err(Error::backend)?;
+                let out = req.send().await.map_err(sdk_err)?;
                 let c = out
                     .credentials()
                     .ok_or_else(|| Error::Config("STS returned no credentials".into()))?;
@@ -168,7 +168,7 @@ impl S3Backend {
             .key(source_key(source, &self.bucket))
             .send()
             .await
-            .map_err(Error::backend)?;
+            .map_err(sdk_err)?;
         let mut create = self
             .client
             .create_multipart_upload()
@@ -181,7 +181,7 @@ impl S3Backend {
         let upload_id = create
             .send()
             .await
-            .map_err(Error::backend)?
+            .map_err(sdk_err)?
             .upload_id()
             .map(str::to_string)
             .ok_or_else(|| Error::Config("no upload id returned".into()))?;
@@ -204,7 +204,7 @@ impl S3Backend {
                     .copy_source_range(format!("bytes={}-{}", r.start, r.end - 1))
                     .send()
                     .await
-                    .map_err(Error::backend)?;
+                    .map_err(sdk_err)?;
                 let etag = out
                     .copy_part_result()
                     .and_then(|c| c.e_tag())
@@ -234,7 +234,7 @@ impl S3Backend {
                     )
                     .send()
                     .await
-                    .map_err(Error::backend)?;
+                    .map_err(sdk_err)?;
                 Ok(())
             }
             Err(e) => {
@@ -386,7 +386,7 @@ impl Backend for S3Backend {
         if let Some(c) = cursor {
             req = req.continuation_token(c);
         }
-        let out = req.send().await.map_err(Error::backend)?;
+        let out = req.send().await.map_err(sdk_err)?;
         let mut entries = Vec::new();
         for p in out.common_prefixes() {
             if let Some(k) = p.prefix() {
@@ -469,7 +469,7 @@ impl Backend for S3Backend {
                             .max_keys(1)
                             .send()
                             .await
-                            .map_err(Error::backend)?;
+                            .map_err(sdk_err)?;
                         if out.key_count().unwrap_or(0) > 0 {
                             return Ok(Some(Entry {
                                 key: key.to_string(),
@@ -483,7 +483,7 @@ impl Backend for S3Backend {
                     }
                     Ok(None)
                 } else {
-                    Err(Error::backend(e))
+                    Err(sdk_err(e))
                 }
             }
         }
@@ -501,7 +501,7 @@ impl Backend for S3Backend {
             .range(format!("bytes={}-{}", range.start, range.end - 1))
             .send()
             .await
-            .map_err(Error::backend)?;
+            .map_err(sdk_err)?;
         let data = out.body.collect().await.map_err(Error::backend)?;
         Ok(data.into_bytes())
     }
@@ -552,7 +552,7 @@ impl Backend for S3Backend {
         if let Some(m) = mtime_meta(opts.mtime) {
             req = req.metadata(META_MTIME, m);
         }
-        let out = req.send().await.map_err(Error::backend)?;
+        let out = req.send().await.map_err(sdk_err)?;
         out.upload_id()
             .map(|u| UploadId(u.to_string()))
             .ok_or_else(|| Error::Config("no upload id returned".into()))
@@ -575,7 +575,7 @@ impl Backend for S3Backend {
             .body(ByteStream::from(data))
             .send()
             .await
-            .map_err(Error::backend)?;
+            .map_err(sdk_err)?;
         out.e_tag()
             .map(|e| PartEtag(e.to_string()))
             .ok_or_else(|| Error::Config("no part etag returned".into()))
@@ -609,7 +609,7 @@ impl Backend for S3Backend {
             .multipart_upload(completed)
             .send()
             .await
-            .map_err(Error::backend)?;
+            .map_err(sdk_err)?;
         let etag = out.e_tag().map(normalize_etag);
         // 分片完成后 HEAD 一次拿到准确大小与 mtime。
         match self.stat(key).await? {
@@ -638,7 +638,7 @@ impl Backend for S3Backend {
             .upload_id(&upload.0)
             .send()
             .await
-            .map_err(Error::backend)?;
+            .map_err(sdk_err)?;
         Ok(())
     }
 
@@ -649,7 +649,7 @@ impl Backend for S3Backend {
             .key(key)
             .send()
             .await
-            .map_err(Error::backend)?;
+            .map_err(sdk_err)?;
         Ok(())
     }
 
@@ -669,7 +669,7 @@ impl Backend for S3Backend {
                 .key(to)
                 .send()
                 .await
-                .map_err(Error::backend)?;
+                .map_err(sdk_err)?;
         }
         self.stat(to)
             .await?
@@ -697,13 +697,68 @@ impl Backend for S3Backend {
     }
 }
 
+/// 带上错误码、消息与 HTTP 状态的后端错误。SDK 的 `Display` 只有 "service error"，直接暴露给用户看不出原因。
+#[derive(Debug)]
+struct SdkMessage(String);
+
+impl std::fmt::Display for SdkMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SdkMessage {}
+
+fn sdk_err<E>(e: aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>) -> Error
+where
+    E: std::error::Error + aws_sdk_s3::error::ProvideErrorMetadata + Send + Sync + 'static,
+{
+    use aws_sdk_s3::error::SdkError;
+    let status = e.raw_response().map(|r| r.status().as_u16());
+    let detail = match &e {
+        SdkError::ServiceError(se) => {
+            let m = se.err().meta();
+            match (m.code(), m.message()) {
+                (Some(c), Some(msg)) => format!("{c}: {msg}"),
+                (Some(c), None) => c.to_string(),
+                (None, Some(msg)) => msg.to_string(),
+                (None, None) => format!("{:?}", se.err()),
+            }
+        }
+        SdkError::DispatchFailure(d) => match d.as_connector_error() {
+            Some(c) => format!("connection failed: {}", error_chain(c)),
+            None => format!("connection failed: {d:?}"),
+        },
+        other => aws_smithy_types::error::display::DisplayErrorContext(other).to_string(),
+    };
+    let text = match status {
+        Some(code) => format!("{detail} (HTTP {code})"),
+        None => detail,
+    };
+    Error::backend(SdkMessage(text))
+}
+
+/// 把错误及其 source 链拼成一行，去掉重复片段。
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut parts: Vec<String> = vec![e.to_string()];
+    let mut cur = e.source();
+    while let Some(s) = cur {
+        let t = s.to_string();
+        if !parts.iter().any(|p| p.contains(&t)) {
+            parts.push(t);
+        }
+        cur = s.source();
+    }
+    parts.join(": ")
+}
+
 fn map_conditional<E>(
     e: aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>,
     key: &str,
     expected: Option<String>,
 ) -> Error
 where
-    E: std::error::Error + Send + Sync + 'static,
+    E: std::error::Error + aws_sdk_s3::error::ProvideErrorMetadata + Send + Sync + 'static,
 {
     if let Some(r) = e.raw_response() {
         if r.status().as_u16() == 412 {
@@ -714,7 +769,7 @@ where
             };
         }
     }
-    Error::backend(e)
+    sdk_err(e)
 }
 
 #[cfg(test)]

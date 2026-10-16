@@ -11,3 +11,4 @@
 /apple/Config/Signing.local.xcconfig
 xcuserdata/
 *.xcuserstate
+/apple/Tools/ndisk-devctl/.build/

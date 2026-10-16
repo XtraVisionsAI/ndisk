@@ -3,18 +3,31 @@ import SwiftUI
 
 @main
 struct NDiskApp: App {
-    @StateObject private var model = MountsModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         MenuBarExtra("NDisk", systemImage: "externaldrive.connected.to.line.below") {
-            MenuContent(model: model)
+            MenuContent(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
 
         Window("添加挂载", id: "add-mount") {
-            AddMountView(model: model)
+            AddMountView(model: delegate.model)
         }
         .windowResizability(.contentSize)
+    }
+}
+
+/// 持有数据模型并接收 `ndisk://` URL。
+/// 注意：MenuBarExtra 的内容视图只在菜单打开时存在，`onOpenURL` 放在那里会丢事件，所以在这里处理。
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let model = MountsModel()
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            Task { await model.handle(url: url) }
+        }
     }
 }
 

@@ -90,6 +90,31 @@ final class MountsModel: ObservableObject {
         }
     }
 
+    /// 处理 `ndisk://` URL（开发自动化与脚本使用）：
+    ///   ndisk://add?id=…&name=…&bucket=…&endpoint=…&access_key=…&secret=…&ttl=3600&path_style=1&region=…&prefix=…
+    ///   ndisk://remove?id=…
+    func handle(url: URL) async {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        var q: [String: String] = [:]
+        for item in comps.queryItems ?? [] { q[item.name] = item.value ?? "" }
+        switch comps.host {
+        case "add":
+            guard let id = q["id"], let bucket = q["bucket"] else { lastError = "ndisk://add 缺少 id 或 bucket"; return }
+            let spec = S3MountSpec(
+                id: id, displayName: q["name"] ?? id, bucket: bucket, prefix: q["prefix"] ?? "",
+                region: q["region"] ?? "us-east-1", endpoint: q["endpoint"], forcePathStyle: q["path_style"] == "1",
+                accessKeyId: q["access_key"], profile: q["profile"],
+                defaultPolicy: .ttl(seconds: UInt64(q["ttl"] ?? "") ?? 7 * 24 * 3600),
+                maxCacheBytes: nil, proxy: q["proxy"], uploadLimit: 0, downloadLimit: 0, readOnly: q["read_only"] == "1")
+            await add(spec: spec, secret: q["secret"])
+            log.info("url add \(id, privacy: .public): \(self.lastError ?? "ok", privacy: .public)")
+        case "remove":
+            if let id = q["id"], let m = mounts.first(where: { $0.id == id }) { remove(m) }
+        default:
+            lastError = "未知 URL：\(url)"
+        }
+    }
+
     private func signalAll() {
         for m in mounts {
             NSFileProviderManager(for: domain(m))?.signalEnumerator(for: .workingSet) { [log] error in
