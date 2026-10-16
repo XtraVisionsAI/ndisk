@@ -101,12 +101,28 @@ impl S3Backend {
             }
         };
         let shared = loader.load().await;
-        let mut b = aws_sdk_s3::config::Builder::from(&shared);
-        if let Some(ep) = &cfg.endpoint {
-            b = b.endpoint_url(ep);
+        let build = |region: Option<String>| {
+            let mut b = aws_sdk_s3::config::Builder::from(&shared);
+            if let Some(ep) = &cfg.endpoint {
+                b = b.endpoint_url(ep);
+            }
+            if let Some(r) = region {
+                b = b.region(aws_config::Region::new(r));
+            }
+            b = b.force_path_style(cfg.force_path_style);
+            Client::from_conf(b.build())
+        };
+        let mut client = build(None);
+        if cfg.endpoint.is_none() {
+            // 真实 AWS：Region 填错时 S3 返回 301/400 并在 x-amz-bucket-region 头里给出正确区域，自动切换。
+            if let Some(actual) = detect_bucket_region(&client, &cfg.bucket).await? {
+                let configured = cfg.region.clone().unwrap_or_else(|| "us-east-1".into());
+                if actual != configured {
+                    tracing::info!(bucket = %cfg.bucket, configured, actual, "bucket is in another region; switching");
+                    client = build(Some(actual));
+                }
+            }
         }
-        b = b.force_path_style(cfg.force_path_style);
-        let client = Client::from_conf(b.build());
         Ok(Self {
             client,
             bucket: cfg.bucket.clone(),
@@ -697,6 +713,26 @@ impl Backend for S3Backend {
     }
 }
 
+/// 用 HeadBucket 探测 Bucket 实际区域。返回 `Ok(None)` 表示区域已正确或无法判断（交给后续请求报错）。
+async fn detect_bucket_region(client: &Client, bucket: &str) -> Result<Option<String>> {
+    match client.head_bucket().bucket(bucket).send().await {
+        Ok(out) => Ok(out.bucket_region().map(str::to_string)),
+        Err(e) => {
+            let region = e
+                .raw_response()
+                .and_then(|r| r.headers().get("x-amz-bucket-region"))
+                .map(str::to_string);
+            let status = e.raw_response().map(|r| r.status().as_u16()).unwrap_or(0);
+            match (region, status) {
+                (Some(r), _) => Ok(Some(r)),
+                // 403/404 等与区域无关的错误留给真正的请求去报，连接阶段不中断。
+                (None, 301 | 400) => Err(sdk_err(e)),
+                (None, _) => Ok(None),
+            }
+        }
+    }
+}
+
 /// 带上错误码、消息与 HTTP 状态的后端错误。SDK 的 `Display` 只有 "service error"，直接暴露给用户看不出原因。
 #[derive(Debug)]
 struct SdkMessage(String);
@@ -731,8 +767,16 @@ where
         },
         other => aws_smithy_types::error::display::DisplayErrorContext(other).to_string(),
     };
+    let hint = match e
+        .raw_response()
+        .and_then(|r| r.headers().get("x-amz-bucket-region"))
+    {
+        Some(r) => format!("; bucket region is {r}"),
+        None if status == Some(301) => "; check endpoint and region".to_string(),
+        _ => String::new(),
+    };
     let text = match status {
-        Some(code) => format!("{detail} (HTTP {code})"),
+        Some(code) => format!("{detail}{hint} (HTTP {code})"),
         None => detail,
     };
     Error::backend(SdkMessage(text))
