@@ -114,6 +114,12 @@ final class MountsModel: ObservableObject {
             log.info("url add \(id, privacy: .public): \(self.lastError ?? "ok", privacy: .public)")
         case "remove":
             if let id = q["id"], let m = mounts.first(where: { $0.id == id }) { remove(m) }
+        case "signal":
+            // 立即唤醒工作集（触发变更上报与 TTL 驱逐），调试用。
+            if let id = q["id"], let m = mounts.first(where: { $0.id == id }) {
+                try? await NSFileProviderManager(for: domain(m))?.signalEnumerator(for: .workingSet)
+                log.info("url signal \(id, privacy: .public)")
+            }
         default:
             lastError = "未知 URL：\(url)"
         }

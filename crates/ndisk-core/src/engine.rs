@@ -191,8 +191,12 @@ impl Engine {
     pub fn eviction_candidates(&self, now: SystemTime) -> Result<Vec<ItemId>> {
         let mut out = Vec::new();
         for (id, at) in self.vfs.meta().materialized_items()? {
-            if self.vfs.meta().get(id)?.is_none() {
+            let Some(node) = self.vfs.meta().get(id)? else {
                 self.vfs.meta().mark_evicted(id)?;
+                continue;
+            };
+            // 系统上报的集合包含根容器与目录；只有文件才有可驱逐的内容。
+            if node.kind != Kind::File {
                 continue;
             }
             if self.has_local_changes(id)? {

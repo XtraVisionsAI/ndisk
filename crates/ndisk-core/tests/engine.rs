@@ -592,6 +592,9 @@ async fn system_owned_copies_export_import_and_ttl_candidates() {
     let now = SystemTime::now();
     assert!(e.eviction_candidates(now).unwrap().is_empty());
     assert_eq!(e.eviction_candidates(now + 2 * H).unwrap(), vec![f]);
+    // 系统上报的集合会包含根容器与目录：它们不能成为驱逐候选
+    e.vfs.meta().sync_materialized(&[ItemId::ROOT, k, f, g]).unwrap();
+    assert_eq!(e.eviction_candidates(now + 2 * H).unwrap(), vec![f]);
     // 系统报告的集合中没有 f（已被系统驱逐）
     e.vfs.meta().sync_materialized(&[g]).unwrap();
     assert!(e.eviction_candidates(now + 2 * H).unwrap().is_empty());

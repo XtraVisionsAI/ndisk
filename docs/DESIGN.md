@@ -184,11 +184,15 @@ pub trait Backend: Send + Sync {
 2. 新装的第三方 File Provider 默认禁用，用户须在"系统设置 → 通用 → 登录项与扩展 → 文件提供程序"中启用，否则 Finder 提示"没有权限打开"。
 3. 根条目（`.rootContainer`）的 `filename` 不能为空，否则扩展被系统断言中止（`__FILEPROVIDER_BAD_ITEM_MISSING_FILENAME__`）；用 domain 显示名。
 
-已在真实 AWS Bucket 上验证：列目录、已有对象为 dataless（云端角标）、mkdir、写入与读回、5 MiB 复制、重命名（含中文）、移动到子目录。
+已在真实 AWS Bucket 上验证：列目录、已有对象为 dataless（云端角标）、mkdir、写入与读回、5 MiB 复制、重命名（含中文）、移动到子目录；Finder 中人工确认了右键四项动作、图钉角标、菜单栏"文件夹"按钮；本机 S3 服务上验证了 60 秒 TTL 到期后系统驱逐已下载文件。
 
-**待办与需进一步验证**：
+注意：系统上报的已下载集合包含根容器与目录，驱逐候选必须只取文件，否则会把根容器驱逐掉导致整个 domain 不可用（已修复并有测试）。
 
-- 右键动作谓词中 `isDownloaded`、`userInfo.pinned` 的可用性需在 Finder 中人工确认；
+调试入口：App 注册了 `ndisk://` URL scheme，`add` / `remove` / `signal`（唤醒工作集）供脚本与 `apple/Tools/ndisk-devctl` 使用。
+
+**待办**：
+
+
 - 远端变更目前只在列目录与工作集唤醒时发现，后续考虑按目录增量轮询；
 - App 状态展示（缓存占用、上传队列）需经扩展的 `NSFileProviderServiceSource` XPC 获取；
 - App 与扩展各自静态链接一份核心（Release 单二进制约 29 MB / 架构），后续改为共享动态框架以减半体积；
@@ -232,7 +236,7 @@ ndisk/
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 S3 兼容服务读写，进程被杀后重挂载上传续传。**已完成**（2026-10-16，见 `scripts/e2e`）|
-| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**进行中**：已签名并在 Finder 中完成读写验证；右键动作、图钉角标、TTL 驱逐待人工确认 |
+| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**核心功能已验证**（2026-10-16）：读写、角标、右键动作、TTL 驱逐均在真机确认；剩余：App 状态展示、远端变更轮询、共享动态框架减体积、冲突副本 |
 | M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试 |
 | M4 | Windows Cloud Files API | 资源管理器中占位符、按需下载、角标 |
 
