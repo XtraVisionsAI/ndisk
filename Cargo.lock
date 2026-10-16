@@ -1649,6 +1649,8 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "aws-sdk-sts",
+ "aws-smithy-http-client",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bytes",
  "ndisk-core",

@@ -3,6 +3,7 @@
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 
@@ -30,7 +31,6 @@ impl Engine {
         let content = Arc::new(ContentCache::new(
             cache_root,
             cfg.cache.block_size,
-            cfg.cache.max_bytes,
             meta.clone(),
         )?);
         let prefix = match &cfg.backend {
@@ -110,12 +110,18 @@ impl Engine {
         let version = n.cache_key();
         let mut out = Vec::with_capacity((end - range.start) as usize);
         for b in first..=last {
-            let data = self
-                .vfs
-                .content()
-                .read_block(id, &version, b)
-                .await?
-                .ok_or_else(|| Error::Io(std::io::Error::other("block vanished")))?;
+            // 驱逐器可能在 ensure 与读取之间删掉块：补拉一次。
+            let data = match self.vfs.content().read_block(id, &version, b).await? {
+                Some(d) => d,
+                None => {
+                    ensure_blocks(&self.vfs, &self.sched, &n, b..b + 1).await?;
+                    self.vfs
+                        .content()
+                        .read_block(id, &version, b)
+                        .await?
+                        .ok_or_else(|| Error::Io(std::io::Error::other("block vanished")))?
+                }
+            };
             let br = self.vfs.content().block_range(b, n.size);
             let s = range.start.max(br.start) - br.start;
             let e = end.min(br.end) - br.start;
@@ -136,30 +142,157 @@ impl Engine {
         .await
     }
 
-    // ---- 缓存控制（右键菜单）----
+    // ---- 缓存控制（右键菜单 / CLI）----
 
+    /// 固定为始终缓存。目录会递归固定当前已知的所有后代并下载。
     pub async fn pin(&self, id: ItemId) -> Result<()> {
-        self.vfs.meta().set_pinned(id, true)?;
-        self.download(id).await
+        self.set_policy(id, Some(CachePolicy::Always)).await
     }
 
+    /// 取消固定，回到继承策略。已下载的内容保留，之后按策略自然驱逐。
     pub fn unpin(&self, id: ItemId) -> Result<()> {
-        self.vfs.meta().set_pinned(id, false)
+        self.vfs.meta().set_pinned(id, false)?;
+        if matches!(self.vfs.get(id)?.policy, Some(CachePolicy::Always)) {
+            self.vfs.meta().set_policy(id, None)?;
+        }
+        Ok(())
     }
 
-    /// 清理本地缓存（有未上传修改时拒绝）。
+    /// 设置节点的缓存策略覆盖；`None` 表示继承父目录或挂载默认值。
+    pub async fn set_policy(&self, id: ItemId, policy: Option<CachePolicy>) -> Result<()> {
+        let always = matches!(policy, Some(CachePolicy::Always));
+        self.vfs.meta().set_policy(id, policy.as_ref())?;
+        self.vfs.meta().set_pinned(id, always)?;
+        if always {
+            self.prefetch_tree(id, true).await?;
+        }
+        Ok(())
+    }
+
+    /// 节点的生效策略：固定标记 > 自身覆盖 > 最近祖先覆盖 > 挂载默认。
+    pub fn effective_policy(&self, id: ItemId) -> Result<CachePolicy> {
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let Some(n) = self.vfs.meta().get(i)? else {
+                break;
+            };
+            if n.local == LocalState::Pinned {
+                return Ok(CachePolicy::Always);
+            }
+            if let Some(p) = n.policy {
+                return Ok(p);
+            }
+            cur = (i != ItemId::ROOT).then_some(n.parent);
+        }
+        Ok(self.cfg.cache.policy)
+    }
+
+    /// 清理本地缓存（有未上传修改时拒绝）。目录递归清理所有后代。
     pub async fn evict(&self, id: ItemId) -> Result<()> {
-        if self.vfs.meta().upload_get(id)?.is_some() {
+        let n = self.vfs.get(id)?;
+        if n.kind == Kind::Dir {
+            for c in self.vfs.meta().children(id)? {
+                Box::pin(self.evict(c.id)).await?;
+            }
+            return Ok(());
+        }
+        if self.has_local_changes(id)? {
             return Err(Error::PermissionDenied("item has pending upload".into()));
         }
         self.vfs.content().evict(id).await
     }
 
-    /// 后台维护：容量约束 + TTL 驱逐。平台层定期调用。
-    pub async fn maintain(&self) -> Result<()> {
-        self.vfs.content().enforce_capacity().await?;
-        // TODO: 按 CachePolicy::Ttl 驱逐超期块（需要 blocks.last_used 与节点策略联合查询）。
-        Ok(())
+    fn has_local_changes(&self, id: ItemId) -> Result<bool> {
+        Ok(self.vfs.meta().upload_get(id)?.is_some() || self.vfs.content().dirty_path(id).exists())
+    }
+
+    /// 下载文件；`recursive` 时对目录递归下载（使用目录 TTL 内的列举结果）。
+    async fn prefetch_tree(&self, id: ItemId, recursive: bool) -> Result<u64> {
+        let n = self.vfs.get(id)?;
+        match n.kind {
+            Kind::File => {
+                if self.is_complete(&n)? {
+                    return Ok(0);
+                }
+                self.download(id).await?;
+                Ok(1)
+            }
+            Kind::Dir if recursive => {
+                let mut count = 0;
+                for c in self.vfs.list(id, false).await? {
+                    count += Box::pin(self.prefetch_tree(c.id, true)).await?;
+                }
+                Ok(count)
+            }
+            Kind::Dir => Ok(0),
+        }
+    }
+
+    fn is_complete(&self, n: &Node) -> Result<bool> {
+        Ok(self
+            .vfs
+            .content()
+            .local_state(n.id, &n.cache_key(), n.size)?
+            == LocalState::Cached)
+    }
+
+    /// 后台维护，平台层定期调用。
+    pub async fn maintain(&self) -> Result<MaintainReport> {
+        self.maintain_at(SystemTime::now()).await
+    }
+
+    /// 以给定"当前时间"执行一次维护（便于测试）：
+    /// 1. TTL：生效策略为 `Ttl(d)` 且最近访问早于 `now - d` 的文件整体驱逐；`None` 策略使用短宽限期；
+    /// 2. 容量：剩余占用仍超过 `max_bytes` 时按 LRU 驱逐未受保护的文件；
+    /// 3. 预取：固定的文件与目录中尚未完整缓存的文件补齐下载。
+    ///
+    /// 始终缓存的文件、有未上传修改的文件不会被驱逐。
+    pub async fn maintain_at(&self, now: SystemTime) -> Result<MaintainReport> {
+        let mut report = MaintainReport::default();
+        let mut remaining = Vec::new();
+        for item in self.vfs.meta().cached_items()? {
+            if self.vfs.meta().get(item.id)?.is_none() {
+                // 节点已删除但块记录残留
+                self.vfs.content().evict(item.id).await?;
+                continue;
+            }
+            if self.has_local_changes(item.id)? {
+                continue;
+            }
+            let idle = now.duration_since(item.last_used).unwrap_or_default();
+            let expired = match self.effective_policy(item.id)? {
+                CachePolicy::Always => continue,
+                CachePolicy::Ttl(d) => idle > d,
+                CachePolicy::None => idle > NONE_POLICY_GRACE,
+            };
+            if expired {
+                self.vfs.content().evict(item.id).await?;
+                report.ttl_evicted += 1;
+                report.bytes_freed += item.bytes;
+            } else {
+                remaining.push(item);
+            }
+        }
+
+        let mut total = self.vfs.meta().total_cached_bytes()?;
+        for item in remaining {
+            if total <= self.cfg.cache.max_bytes {
+                break;
+            }
+            self.vfs.content().evict(item.id).await?;
+            total = total.saturating_sub(item.bytes);
+            report.capacity_evicted += 1;
+            report.bytes_freed += item.bytes;
+        }
+
+        for id in self.vfs.meta().pinned_items()? {
+            match self.prefetch_tree(id, true).await {
+                Ok(n) => report.prefetched += n,
+                Err(e) => tracing::warn!(item = id.0, error = %e, "prefetch of pinned item failed"),
+            }
+        }
+        report.cached_bytes = self.vfs.meta().total_cached_bytes()?;
+        Ok(report)
     }
 
     pub async fn resume_uploads(&self) -> Result<()> {
@@ -170,6 +303,19 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+/// `CachePolicy::None` 的宽限期：避免正在顺序读取的文件被立刻回收。
+pub const NONE_POLICY_GRACE: Duration = Duration::from_secs(60);
+
+/// 一次维护的结果。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct MaintainReport {
+    pub ttl_evicted: u64,
+    pub capacity_evicted: u64,
+    pub bytes_freed: u64,
+    pub prefetched: u64,
+    pub cached_bytes: u64,
 }
 
 /// 确保节点在 `blocks` 范围内的块都已在本地。并发受 scheduler 限制。

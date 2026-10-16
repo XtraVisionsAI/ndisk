@@ -62,10 +62,34 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum CacheOp {
+    /// 固定为始终缓存（目录递归）。
     Pin { path: String },
+    /// 取消固定。
     Unpin { path: String },
+    /// 清理本地缓存（目录递归；有未上传修改时拒绝）。
     Evict { path: String },
+    /// 立即下载到本地。
     Download { path: String },
+    /// 设置缓存策略：`ttl:<秒>`、`always`、`none`、`inherit`。
+    Policy { path: String, policy: String },
+    /// 立即执行一次维护（TTL 与容量驱逐、固定预取）。
+    Gc,
+}
+
+fn parse_policy(s: &str) -> Result<Option<ndisk_core::CachePolicy>> {
+    use ndisk_core::CachePolicy;
+    Ok(match s {
+        "inherit" | "default" => None,
+        "always" | "pin" => Some(CachePolicy::Always),
+        "none" => Some(CachePolicy::None),
+        _ => {
+            let secs = s
+                .strip_prefix("ttl:")
+                .and_then(|v| v.parse::<u64>().ok())
+                .context("policy must be ttl:<seconds> | always | none | inherit")?;
+            Some(CachePolicy::Ttl(std::time::Duration::from_secs(secs)))
+        }
+    })
 }
 
 #[tokio::main]
@@ -105,8 +129,19 @@ async fn main() -> Result<()> {
                     tokio::time::interval(std::time::Duration::from_secs(maintain_interval.max(5)));
                 loop {
                     tick.tick().await;
-                    if let Err(e) = maint.maintain().await {
-                        tracing::warn!(error = %e, "maintenance failed");
+                    match maint.maintain().await {
+                        Ok(r) if r.ttl_evicted + r.capacity_evicted + r.prefetched > 0 => {
+                            tracing::info!(
+                                ttl_evicted = r.ttl_evicted,
+                                capacity_evicted = r.capacity_evicted,
+                                freed = r.bytes_freed,
+                                prefetched = r.prefetched,
+                                cached = r.cached_bytes,
+                                "maintenance"
+                            )
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!(error = %e, "maintenance failed"),
                     }
                 }
             });
@@ -146,6 +181,10 @@ async fn main() -> Result<()> {
             println!("mount      : {} ({})", cfg.display_name, cfg.id);
             println!("backend    : {}", engine.vfs.backend().name());
             println!(
+                "policy     : {:?} (max {} bytes)",
+                cfg.cache.policy, cfg.cache.max_bytes
+            );
+            println!(
                 "cached     : {} bytes",
                 engine.vfs.meta().total_cached_bytes()?
             );
@@ -165,6 +204,18 @@ async fn main() -> Result<()> {
             CacheOp::Unpin { path } => engine.unpin(resolve(&engine, &path).await?)?,
             CacheOp::Evict { path } => engine.evict(resolve(&engine, &path).await?).await?,
             CacheOp::Download { path } => engine.download(resolve(&engine, &path).await?).await?,
+            CacheOp::Policy { path, policy } => {
+                let id = resolve(&engine, &path).await?;
+                engine.set_policy(id, parse_policy(&policy)?).await?;
+                println!(
+                    "{path}: effective policy {:?}",
+                    engine.effective_policy(id)?
+                );
+            }
+            CacheOp::Gc => println!(
+                "{}",
+                serde_json::to_string_pretty(&engine.maintain().await?)?
+            ),
         },
         Cmd::Config => unreachable!(),
     }
@@ -216,6 +267,7 @@ fn template() -> Result<MountConfig> {
             force_path_style: false,
             auth: ndisk_core::config::S3Auth::Default,
             dir_markers: true,
+            copy_threshold: None,
         }),
         cache: Default::default(),
         network: Default::default(),

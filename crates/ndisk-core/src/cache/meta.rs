@@ -314,23 +314,44 @@ impl MetaStore {
         Ok(v as u64)
     }
 
-    /// 按 LRU 顺序返回未固定节点的块，供驱逐器使用。
-    pub fn lru_blocks(&self, limit: usize) -> Result<Vec<(ItemId, String, u64, u64)>> {
+    /// 所有有本地块的节点：(id, 最近访问时间, 占用字节)，按最近访问升序（LRU 在前）。
+    pub fn cached_items(&self) -> Result<Vec<CachedItem>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT b.item_id, b.etag, b.block_no, b.size FROM blocks b
-             JOIN nodes n ON n.id = b.item_id
-             WHERE n.pinned = 0 ORDER BY b.last_used ASC LIMIT ?1",
+            "SELECT item_id, MAX(last_used), SUM(size) FROM blocks GROUP BY item_id ORDER BY MAX(last_used) ASC",
         )?;
-        let rows = stmt.query_map(params![limit as i64], |r| {
-            Ok((
-                ItemId(r.get::<_, i64>(0)? as u64),
-                r.get(1)?,
-                r.get::<_, i64>(2)? as u64,
-                r.get::<_, i64>(3)? as u64,
-            ))
+        let rows = stmt.query_map([], |r| {
+            Ok(CachedItem {
+                id: ItemId(r.get::<_, i64>(0)? as u64),
+                last_used: from_secs(r.get(1)?),
+                bytes: r.get::<_, i64>(2)? as u64,
+            })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn pinned_items(&self) -> Result<Vec<ItemId>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id FROM nodes WHERE pinned = 1 ORDER BY id")?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        Ok(rows
+            .map(|r| r.map(|v| ItemId(v as u64)))
+            .collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// 设置节点自身的缓存策略覆盖；`None` 表示继承。
+    pub fn set_policy(&self, id: ItemId, policy: Option<&CachePolicy>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let v = policy.map(|p| serde_json::to_string(p).unwrap_or_default());
+        conn.execute(
+            "UPDATE nodes SET policy = ?2 WHERE id = ?1",
+            params![id.0, v],
+        )?;
+        conn.execute(
+            "INSERT INTO changes(item_id, deleted) VALUES (?1, 0)",
+            params![id.0],
+        )?;
+        Ok(())
     }
 
     // ---- uploads ----
@@ -379,6 +400,14 @@ impl MetaStore {
         let rows = stmt.query_map([], row_to_upload)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+}
+
+/// 驱逐器视角的一个已缓存节点。
+#[derive(Debug, Clone)]
+pub struct CachedItem {
+    pub id: ItemId,
+    pub last_used: SystemTime,
+    pub bytes: u64,
 }
 
 /// 一条写回记录，进程重启后据此恢复分片上传。

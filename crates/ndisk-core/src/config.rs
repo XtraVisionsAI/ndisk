@@ -50,6 +50,10 @@ pub struct S3Config {
     /// 是否写 `dir/` 零字节标记对象来表示目录。
     #[serde(default = "default_true")]
     pub dir_markers: bool,
+    /// 超过该大小的对象改用分片服务端复制（重命名时使用）。默认 5 GiB，即 S3 CopyObject 上限；
+    /// 部分 S3 兼容服务的单次复制上限更低，可按需调小（最小 5 MiB）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_threshold: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

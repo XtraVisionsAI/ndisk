@@ -208,6 +208,14 @@ impl Backend for Mem {
 }
 
 fn config(block_size: u64) -> MountConfig {
+    config_with(
+        block_size,
+        CachePolicy::Ttl(std::time::Duration::from_secs(3600)),
+        1 << 40,
+    )
+}
+
+fn config_with(block_size: u64, policy: CachePolicy, max_bytes: u64) -> MountConfig {
     MountConfig {
         id: "t".into(),
         display_name: "t".into(),
@@ -219,9 +227,12 @@ fn config(block_size: u64) -> MountConfig {
             force_path_style: false,
             auth: S3Auth::Default,
             dir_markers: true,
+            copy_threshold: None,
         }),
         cache: CacheConfig {
             block_size,
+            policy,
+            max_bytes,
             multipart_threshold: 4096,
             part_size: 5 * 1024 * 1024,
             ..Default::default()
@@ -383,4 +394,166 @@ async fn rename_and_delete_keep_item_id() {
     assert!(changes
         .iter()
         .any(|c| matches!(c, Change::Delete(d) if *d == one)));
+}
+
+fn setup_with(mem: Arc<Mem>, cfg: MountConfig) -> (Engine, tempdir::Dir) {
+    let dir = tempdir::Dir::new();
+    let e = Engine::open(cfg, mem, dir.path.clone()).unwrap();
+    (e, dir)
+}
+
+async fn seed(mem: &Mem, keys: &[&str], size: usize) {
+    for k in keys {
+        mem.put(k, Bytes::from(vec![7u8; size]), Default::default())
+            .await
+            .unwrap();
+    }
+}
+
+const H: std::time::Duration = std::time::Duration::from_secs(3600);
+
+#[tokio::test]
+async fn ttl_eviction_respects_inheritance_and_pins() {
+    let mem = Arc::new(Mem::default());
+    seed(
+        &mem,
+        &[
+            "data/a.bin",
+            "data/keep/b.bin",
+            "data/hot/c.bin",
+            "data/pin.bin",
+        ],
+        3000,
+    )
+    .await;
+    // 默认策略：1 小时 TTL
+    let (e, _d) = setup_with(mem, config_with(1024, CachePolicy::Ttl(H), 1 << 40));
+    let a = resolve(&e, "a.bin").await;
+    let keep = resolve(&e, "keep").await;
+    let b = resolve(&e, "keep/b.bin").await;
+    let hot = resolve(&e, "hot").await;
+    let c = resolve(&e, "hot/c.bin").await;
+    let pin = resolve(&e, "pin.bin").await;
+    // keep/ 目录覆盖为 24 小时；hot/ 覆盖为 None（读完即回收）
+    e.set_policy(keep, Some(CachePolicy::Ttl(24 * H)))
+        .await
+        .unwrap();
+    e.set_policy(hot, Some(CachePolicy::None)).await.unwrap();
+    for id in [a, b, c] {
+        e.download(id).await.unwrap();
+    }
+    e.pin(pin).await.unwrap();
+    assert_eq!(
+        e.effective_policy(b).unwrap(),
+        CachePolicy::Ttl(24 * H),
+        "inherits from parent dir"
+    );
+    assert_eq!(e.effective_policy(pin).unwrap(), CachePolicy::Always);
+
+    let now = SystemTime::now();
+    // 30 秒后：都不驱逐（None 有 60 秒宽限期）
+    let r = e
+        .maintain_at(now + std::time::Duration::from_secs(30))
+        .await
+        .unwrap();
+    assert_eq!(r.ttl_evicted, 0);
+    // 2 分钟后：hot/c.bin 被回收
+    let r = e
+        .maintain_at(now + std::time::Duration::from_secs(120))
+        .await
+        .unwrap();
+    assert_eq!(r.ttl_evicted, 1);
+    assert_eq!(e.vfs.get(c).unwrap().local, LocalState::Cloud);
+    // 2 小时后：a.bin 过期；keep/b.bin（24h）与 pin.bin 保留
+    let r = e.maintain_at(now + 2 * H).await.unwrap();
+    assert_eq!(r.ttl_evicted, 1);
+    assert_eq!(e.vfs.get(a).unwrap().local, LocalState::Cloud);
+    assert_eq!(e.vfs.get(b).unwrap().local, LocalState::Cached);
+    assert_eq!(e.stat(pin).unwrap().local, LocalState::Pinned);
+    // 25 小时后：keep/b.bin 也过期；pin.bin 仍在
+    e.maintain_at(now + 25 * H).await.unwrap();
+    assert_eq!(e.vfs.get(b).unwrap().local, LocalState::Cloud);
+    assert_eq!(
+        e.vfs
+            .content()
+            .local_state(pin, &e.vfs.get(pin).unwrap().cache_key(), 3000)
+            .unwrap(),
+        LocalState::Cached
+    );
+    // 取消固定后按默认 TTL 驱逐
+    e.unpin(pin).unwrap();
+    assert_eq!(e.effective_policy(pin).unwrap(), CachePolicy::Ttl(H));
+    let r = e.maintain_at(now + 2 * H).await.unwrap();
+    assert_eq!(r.ttl_evicted, 1);
+    assert_eq!(e.vfs.get(pin).unwrap().local, LocalState::Cloud);
+}
+
+#[tokio::test]
+async fn capacity_eviction_is_lru_and_skips_dirty_and_pinned() {
+    let mem = Arc::new(Mem::default());
+    seed(
+        &mem,
+        &["data/1.bin", "data/2.bin", "data/3.bin", "data/4.bin"],
+        4096,
+    )
+    .await;
+    // 上限 10 KiB，四个 4 KiB 文件
+    let (e, _d) = setup_with(mem, config_with(1024, CachePolicy::Ttl(24 * H), 10 * 1024));
+    let ids: Vec<_> = futures_join(&e, &["1.bin", "2.bin", "3.bin", "4.bin"]).await;
+    e.pin(ids[0]).await.unwrap(); // 最旧，但固定
+    for id in &ids[1..] {
+        e.download(*id).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await; // last_used 精度为秒
+    }
+    // 2.bin 有本地修改：不能驱逐
+    let p = e.writeback.open_for_write(ids[1]).await.unwrap();
+    std::fs::write(&p, b"local edit").unwrap();
+    let r = e.maintain().await.unwrap();
+    // 总量 16 KiB > 10 KiB：跳过 1（固定）与 2（脏），驱逐最旧的 3，降到 12 KiB 仍超，再驱逐 4
+    assert_eq!(r.capacity_evicted, 2);
+    assert_eq!(e.vfs.get(ids[2]).unwrap().local, LocalState::Cloud);
+    assert_eq!(e.vfs.get(ids[3]).unwrap().local, LocalState::Cloud);
+    assert_eq!(e.stat(ids[1]).unwrap().local, LocalState::Dirty);
+    assert!(
+        e.evict(ids[1]).await.is_err(),
+        "manual evict of dirty file refused"
+    );
+}
+
+#[tokio::test]
+async fn pinned_directory_prefetches_new_children() {
+    let mem = Arc::new(Mem::default());
+    seed(&mem, &["data/p/x.bin"], 2000).await;
+    let cfg = {
+        let mut c = config_with(1024, CachePolicy::Ttl(H), 1 << 40);
+        c.cache.dir_ttl = std::time::Duration::ZERO; // 每次维护都重新列举
+        c
+    };
+    let (e, _d) = setup_with(mem.clone(), cfg);
+    let p = resolve(&e, "p").await;
+    e.pin(p).await.unwrap();
+    let x = resolve(&e, "p/x.bin").await;
+    assert_eq!(
+        e.vfs.get(x).unwrap().local,
+        LocalState::Cached,
+        "existing child downloaded on pin"
+    );
+    // 远端新增文件，维护时自动预取
+    seed(&mem, &["data/p/sub/y.bin"], 2000).await;
+    let r = e.maintain().await.unwrap();
+    assert_eq!(r.prefetched, 1);
+    let y = resolve(&e, "p/sub/y.bin").await;
+    assert_eq!(e.vfs.get(y).unwrap().local, LocalState::Cached);
+    assert_eq!(e.effective_policy(y).unwrap(), CachePolicy::Always);
+    // 固定目录下的文件不被 TTL 驱逐
+    let r = e.maintain_at(SystemTime::now() + 48 * H).await.unwrap();
+    assert_eq!(r.ttl_evicted, 0);
+}
+
+async fn futures_join(e: &Engine, names: &[&str]) -> Vec<ItemId> {
+    let mut out = Vec::new();
+    for n in names {
+        out.push(resolve(e, n).await);
+    }
+    out
 }

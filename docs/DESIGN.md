@@ -94,7 +94,7 @@ pub trait Backend: Send + Sync {
 | stat | `HeadObject`；失败时回退到前缀列举判断是否为隐式目录 |
 | 读 | `GetObject` + `Range`，按块读取填充内容缓存 |
 | 写 | 永远先写本地缓存文件；close 后进入写回队列。小于 `multipart_threshold`（默认 16 MiB）用 `PutObject`，否则分片上传 |
-| rename | 文件：`CopyObject`（>5 GiB 用 `UploadPartCopy`）后删除；目录：递归 |
+| rename | 文件：`CopyObject` 后删除，超过 `copy_threshold`（默认 5 GiB）用 `UploadPartCopy` 按 512 MiB 分片复制；`CopySource` 需 URL 编码以支持中文、空格等键名；目录：递归 |
 | mtime / 权限 | 存在用户元数据 `x-amz-meta-mtime` 等，兼容 s3fs 字段名；权限位不强求保存 |
 | 冲突检测 | 上传时带 `If-Match: <本地已知 etag>`；返回 412 则保留本地为 `name (conflicted copy YYYY-MM-DD).ext` 并拉取远端版本 |
 
@@ -110,11 +110,12 @@ pub trait Backend: Send + Sync {
 
 - 布局：`<cache_root>/<mount_id>/blocks/<item_id>/<etag>/<block_no>`，块大小默认 8 MiB。
 - 任意 `etag` 变化即整体失效，不做局部比对。部分 S3 兼容实现（如 versitygw posix 后端对外部写入的文件）HEAD 不返回 etag，此时版本键退化为 `mtime+size`；If-Match 冲突检测仍只使用真实 etag。
-- 三种策略，按挂载点设默认值，可对目录 / 文件单独覆盖：
+- 三种策略，按挂载点设默认值，可对目录 / 文件单独覆盖（生效顺序：固定标记 > 节点自身覆盖 > 最近祖先目录覆盖 > 挂载默认）：
   - `ttl(duration)`：最后访问超过时长后由后台驱逐器删除本地块；
   - `always`：固定，不驱逐，元数据变化时主动预取；
-  - `none`：只在读取过程中短暂驻留，读完即可回收。
+  - `none`：只在读取过程中短暂驻留，60 秒宽限期后回收。
 - 容量上限 + LRU 作为所有策略之上的硬约束。
+- 驱逐以文件为粒度（与 Finder 的"云端 / 已下载"状态一致），由 `Engine::maintain` 周期执行：先 TTL，再按 LRU 压到容量上限，最后为固定的文件与目录补齐下载（固定目录下新出现的文件也会被预取）。始终缓存的文件与有未上传修改的文件永不驱逐。
 - "文件已在本地 / 仍在云端"的判定：该 `item_id` 当前 `etag` 下所有块齐全即为已缓存，这个状态同时驱动 Finder 角标和 CLI 输出。
 
 ### 3.4 写回与断点续传
@@ -131,7 +132,7 @@ pub trait Backend: Send + Sync {
 - 全局 Tokio runtime，一个按挂载点隔离的任务队列；默认并发：下载 8、上传 4、元数据 16。
 - 限速：令牌桶，分别作用于上传、下载字节流，可在运行时调整。
 - 重试：指数退避，区分可重试错误（5xx、限流、超时）与不可重试（403、404、412）。
-- 代理：系统代理 / 自定义 HTTP(S) 代理，通过自定义 hyper connector 注入 SDK；SDK 默认不读环境变量代理，需要我们显式处理。
+- 代理：`network.proxy` 取值 `env` / `system`（读取 `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`，macOS 系统代理由平台层转换为环境变量）或 `http://[user:pass@]host:port`。通过 aws-smithy-http-client 的 `ProxyConfig` 构造自定义连接器注入 SDK，STS / SSO 凭据请求同样走代理。
 
 ### 3.6 认证
 

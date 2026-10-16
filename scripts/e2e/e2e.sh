@@ -26,10 +26,11 @@ if ! docker ps --format '{{.Names}}' | grep -qx $DEV; then
   docker run -d --name $DEV --network $NET --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined \
     -v "$ROOT":/src -v $VOL:/s3data -v "$HOME/.cargo/registry":/usr/local/cargo/registry \
     -e CARGO_TARGET_DIR=/src/target-linux rust:bookworm sleep infinity >/dev/null
-  docker exec $DEV bash -c 'apt-get update -qq >/dev/null && apt-get install -y -qq fuse3 sqlite3 >/dev/null 2>&1'
+  docker exec $DEV bash -c 'apt-get update -qq >/dev/null && apt-get install -y -qq fuse3 sqlite3 python3 >/dev/null 2>&1'
 fi
 docker exec $DEV mkdir -p /s3data/test
 docker exec $DEV bash -c 'cd /src && cargo build -p ndisk-cli'
 docker exec $DEV bash -c 'rm -rf /test && mkdir -p /test && cp /src/scripts/e2e/* /test/'
 echo "=== run.sh ==="; docker exec $DEV bash /test/run.sh
 echo "=== crash.sh ==="; docker exec $DEV bash /test/crash.sh
+echo "=== extra.sh ==="; docker exec $DEV bash /test/extra.sh

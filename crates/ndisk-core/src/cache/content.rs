@@ -18,23 +18,16 @@ use crate::Result;
 pub struct ContentCache {
     root: PathBuf,
     block_size: u64,
-    max_bytes: u64,
     meta: Arc<MetaStore>,
 }
 
 impl ContentCache {
-    pub fn new(
-        root: PathBuf,
-        block_size: u64,
-        max_bytes: u64,
-        meta: Arc<MetaStore>,
-    ) -> Result<Self> {
+    pub fn new(root: PathBuf, block_size: u64, meta: Arc<MetaStore>) -> Result<Self> {
         std::fs::create_dir_all(root.join("blocks"))?;
         std::fs::create_dir_all(root.join("dirty"))?;
         Ok(Self {
             root,
             block_size,
-            max_bytes,
             meta,
         })
     }
@@ -144,53 +137,6 @@ impl ContentCache {
             }
         }
         Ok(())
-    }
-
-    /// 容量超限时按 LRU 驱逐未固定的块，直到低于上限。
-    pub async fn enforce_capacity(&self) -> Result<u64> {
-        let mut total = self.meta.total_cached_bytes()?;
-        let mut freed = 0;
-        while total > self.max_bytes {
-            let victims = self.meta.lru_blocks(64)?;
-            if victims.is_empty() {
-                break;
-            }
-            for (id, etag, block_no, size) in victims {
-                let p = self.block_path(id, &etag, block_no);
-                let _ = tokio::fs::remove_file(&p).await;
-                // 单块删除后同步 blocks 表：直接重建该节点的记录最简单可靠。
-                self.meta.forget_blocks(id)?;
-                for b in self.rescan_blocks(id, &etag).await? {
-                    self.meta.record_block(id, &etag, b.0, b.1)?;
-                }
-                total = total.saturating_sub(size);
-                freed += size;
-                if total <= self.max_bytes {
-                    break;
-                }
-            }
-        }
-        Ok(freed)
-    }
-
-    async fn rescan_blocks(&self, id: ItemId, etag: &str) -> Result<Vec<(u64, u64)>> {
-        let dir = self
-            .root
-            .join("blocks")
-            .join(id.0.to_string())
-            .join(hex(etag));
-        let mut out = Vec::new();
-        let mut rd = match tokio::fs::read_dir(&dir).await {
-            Ok(rd) => rd,
-            Err(_) => return Ok(out),
-        };
-        while let Some(ent) = rd.next_entry().await? {
-            if let Ok(no) = ent.file_name().to_string_lossy().parse::<u64>() {
-                let len = ent.metadata().await?.len();
-                out.push((no, len));
-            }
-        }
-        Ok(out)
     }
 
     // ---- dirty files（写路径）----

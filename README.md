@@ -27,8 +27,18 @@ ndisk -c my.toml mount ~/mnt/s3   # 前台运行，fusermount3 -u ~/mnt/s3 卸�
 ```
 
 运行时依赖 `fuse3`（提供 fusermount3）。端到端测试在 Docker 中进行：`scripts/e2e/e2e.sh`，
-它会启动 versitygw 作为 S3 兼容服务，覆盖读写、分片上传、重命名、删除、外部变更可见性，
-以及上传中 SIGKILL 后重挂载续传。
+它会启动 versitygw 作为 S3 兼容服务，覆盖读写、分片上传、重命名、删除、外部变更可见性、
+上传中 SIGKILL 后重挂载续传、非 ASCII 文件名、分片服务端复制、HTTP 代理、缓存策略与 TTL 回收。
+
+## 缓存控制
+
+```sh
+ndisk -c my.toml cache policy /photos ttl:86400   # 目录下文件闲置 1 天后回收
+ndisk -c my.toml cache policy /docs always        # 等同 pin：递归下载并始终保留
+ndisk -c my.toml cache policy /tmp none           # 读完即可回收
+ndisk -c my.toml cache policy /photos inherit     # 清除覆盖，继承上级
+ndisk -c my.toml cache gc                         # 立即执行一次维护
+```
 
 ## 授权
 

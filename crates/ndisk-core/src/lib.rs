@@ -16,6 +16,6 @@ pub mod vfs;
 pub mod writeback;
 
 pub use backend::Backend;
-pub use engine::Engine;
+pub use engine::{Engine, MaintainReport};
 pub use error::{Error, Result};
 pub use types::*;

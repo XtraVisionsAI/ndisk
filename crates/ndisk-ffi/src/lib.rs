@@ -113,7 +113,22 @@ impl Session {
         self.rt.block_on(self.engine.evict(ItemId(id)))
     }
 
-    pub fn maintain(&self) -> Result<()> {
-        self.rt.block_on(self.engine.maintain())
+    /// 设置缓存策略；`policy_json` 为 `CachePolicy` 的 JSON，空串表示继承。
+    pub fn set_policy(&self, id: u64, policy_json: &str) -> Result<()> {
+        let policy = if policy_json.trim().is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::from_str(policy_json)
+                    .map_err(|e| ndisk_core::Error::Config(e.to_string()))?,
+            )
+        };
+        self.rt.block_on(self.engine.set_policy(ItemId(id), policy))
+    }
+
+    /// 执行一次维护，返回 `MaintainReport` 的 JSON。
+    pub fn maintain(&self) -> Result<String> {
+        let r = self.rt.block_on(self.engine.maintain())?;
+        Ok(serde_json::to_string(&r).unwrap_or_default())
     }
 }
