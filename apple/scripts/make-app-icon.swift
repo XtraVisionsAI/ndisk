@@ -1,4 +1,6 @@
-// 生成 App 图标：apple/App/Assets.xcassets/AppIcon.appiconset（macOS 全部尺寸）。
+// 生成传统 App 图标（macOS 13–15 回退用）：apple/App/Assets.xcassets/AppIcon.appiconset。
+// macOS 26+ 使用 apple/App/AppIcon.icon（Icon Composer 格式，背景由系统渲染），
+// 其图形层由 apple/scripts/make-icon-layer.swift 生成。
 // 用法：swift apple/scripts/make-app-icon.swift apple/App/Assets.xcassets/AppIcon.appiconset
 import AppKit
 
@@ -16,12 +18,12 @@ func render(_ px: Int) -> Data {
     let inset = s * 0.1
     let rect = NSRect(x: inset, y: inset, width: s - 2 * inset, height: s - 2 * inset)
     let path = NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.225, yRadius: rect.width * 0.225)
-    let gradient = NSGradient(starting: NSColor(calibratedRed: 0.36, green: 0.72, blue: 1.0, alpha: 1),
-                              ending: NSColor(calibratedRed: 0.12, green: 0.50, blue: 0.96, alpha: 1))!
-    gradient.draw(in: path, angle: -90)
+    // 与 .icon 的浅色渲染一致：白底、蓝图形。
+    NSGradient(starting: .white, ending: NSColor(calibratedWhite: 0.93, alpha: 1))!.draw(in: path, angle: -90)
+    NSColor(calibratedWhite: 0, alpha: 0.10).setStroke(); path.lineWidth = max(1, s * 0.008); path.stroke()
     // 网络磁盘图形（与菜单栏图标同源），细节少，18 像素菜单尺寸下仍清晰。
     let cfg = NSImage.SymbolConfiguration(pointSize: rect.width * 0.56, weight: .regular)
-        .applying(.init(paletteColors: [.white]))
+        .applying(.init(paletteColors: [NSColor(calibratedRed: 0.12, green: 0.50, blue: 0.96, alpha: 1)]))
     if let sym = NSImage(systemSymbolName: "externaldrive.connected.to.line.below.fill", accessibilityDescription: nil)?
         .withSymbolConfiguration(cfg) {
         let sz = sym.size

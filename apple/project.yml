@@ -18,7 +18,10 @@ targets:
     platform: macOS
     sources:
       - path: App
-        excludes: ["*.entitlements", "Info.plist"]
+        excludes: ["*.entitlements", "Info.plist", "AppIcon.icon"]
+      - path: App/AppIcon.icon
+        type: file
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(NDISK_BUNDLE_PREFIX)

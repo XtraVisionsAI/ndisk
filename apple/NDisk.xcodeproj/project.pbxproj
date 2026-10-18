@@ -17,6 +17,7 @@
 		7F1C760E013E474D5B9A3C6D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93B1DD5CA23D03297A119BC1 /* Assets.xcassets */; };
 		9CB735371B10BF0E2486E6C3 /* MountFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F0E303B09E3AE0A85D8955E /* MountFormView.swift */; };
 		DDED06EDC0DD0D0C5EE7C909 /* PinnedBadge.icns in Resources */ = {isa = PBXBuildFile; fileRef = CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */; };
+		E942F6D37F31812B89B2F6D2 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 227A88E3FE733D9010006D31 /* AppIcon.icon */; };
 		EE272EBD480766DED360DCE9 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B88564D1C72681750AFF99 /* FileProviderItem.swift */; };
 		FFC3BA23E5CBF128403D781A /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */; };
 /* End PBXBuildFile section */
@@ -48,6 +49,7 @@
 /* Begin PBXFileReference section */
 		1F0E303B09E3AE0A85D8955E /* MountFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountFormView.swift; sourceTree = "<group>"; };
 		21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
+		227A88E3FE733D9010006D31 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		426405073ECE94CC13D4D21E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5AF44CD52A30F3F8C5619594 /* NDisk.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = NDisk.xcconfig; sourceTree = "<group>"; };
 		6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NDiskFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -84,6 +86,7 @@
 		216527CCF7D30F776758FC32 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				227A88E3FE733D9010006D31 /* AppIcon.icon */,
 				93B1DD5CA23D03297A119BC1 /* Assets.xcassets */,
 				1F0E303B09E3AE0A85D8955E /* MountFormView.swift */,
 				ADFA7A63883209936D438B34 /* MountsModel.swift */,
@@ -240,6 +243,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E942F6D37F31812B89B2F6D2 /* AppIcon.icon in Resources */,
 				7F1C760E013E474D5B9A3C6D /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
