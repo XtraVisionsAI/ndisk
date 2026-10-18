@@ -19,10 +19,10 @@ func render(_ px: Int) -> Data {
     let gradient = NSGradient(starting: NSColor(calibratedRed: 0.36, green: 0.72, blue: 1.0, alpha: 1),
                               ending: NSColor(calibratedRed: 0.12, green: 0.50, blue: 0.96, alpha: 1))!
     gradient.draw(in: path, angle: -90)
-    // 只留一个白色实心云朵，小尺寸下也清晰。
-    let cfg = NSImage.SymbolConfiguration(pointSize: rect.width * 0.58, weight: .regular)
+    // 网络磁盘图形（与菜单栏图标同源），细节少，18 像素菜单尺寸下仍清晰。
+    let cfg = NSImage.SymbolConfiguration(pointSize: rect.width * 0.56, weight: .regular)
         .applying(.init(paletteColors: [.white]))
-    if let sym = NSImage(systemSymbolName: "cloud.fill", accessibilityDescription: nil)?
+    if let sym = NSImage(systemSymbolName: "externaldrive.connected.to.line.below.fill", accessibilityDescription: nil)?
         .withSymbolConfiguration(cfg) {
         let sz = sym.size
         sym.draw(in: NSRect(x: (s - sz.width) / 2, y: (s - sz.height) / 2, width: sz.width, height: sz.height))
