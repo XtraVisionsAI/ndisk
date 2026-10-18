@@ -1,0 +1,32 @@
+[package]
+name = "ndisk-backend-opendal"
+description = "Apache OpenDAL backend for ndisk (OSS, WebDAV, Dropbox, ...)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ndisk-core = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+opendal = { version = "0.59", default-features = false, features = [
+    "services-oss",
+    "services-webdav",
+    "services-dropbox",
+    "services-memory",
+    "http-transport-reqwest",
+    "executors-tokio",
+    "layers-timeout",
+] }
+# 构造带代理的 HTTP 客户端，注入到每个 Operator。
+opendal-http-transport-reqwest = "0.59.5"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

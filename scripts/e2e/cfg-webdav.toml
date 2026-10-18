@@ -1,0 +1,22 @@
+id = "dav"
+display_name = "WebDAV"
+read_only = false
+
+[backend]
+type = "opendal"
+scheme = "webdav"
+secret_ref = "env"
+
+[backend.options]
+endpoint = "http://127.0.0.1/dav"
+username = "testkey"
+root = "/"
+
+[cache]
+block_size = 4194304
+multipart_threshold = 8388608
+part_size = 5242880
+
+[cache.policy]
+mode = "ttl"
+value = 3600

@@ -1,12 +1,13 @@
 #!/bin/bash
-# 在 ndisk-dev 容器内执行的端到端测试。
+# 在 ndisk-dev 容器内执行的端到端测试。后端可换：CFG 指向挂载配置，
+# S3 指向后端在容器内可直接查看的数据目录（versitygw 的 posix 目录或 WebDAV 的文档根）。
 set -u
-export NDISK_S3_SECRET=testsecret RUST_LOG=info,aws_config=warn,aws_smithy_runtime=warn
+export NDISK_SECRET=testsecret RUST_LOG=info,aws_config=warn,aws_smithy_runtime=warn
 BIN=/src/target-linux/debug/ndisk
-CFG=/test/cfg.toml
+CFG=${CFG:-/test/cfg.toml}
 MNT=/mnt/ndisk
 CACHE=/tmp/ndisk-cache
-S3=/s3data/test
+S3=${S3:-/s3data/test}
 fail=0
 check() { if [ "$1" = "0" ]; then echo "PASS: $2"; else echo "FAIL: $2"; fail=1; fi; }
 

@@ -60,7 +60,10 @@ impl Backend for Mem {
                     key: k.clone(),
                     kind: Kind::File,
                     size: data.len() as u64,
-                    mtime: Some(SystemTime::now()),
+                    // 固定值：列举结果须稳定，否则跨秒的两次刷新会被当成远端变更。
+                    mtime: Some(
+                        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
+                    ),
                     etag: Some(tag.clone()),
                     version: None,
                 });
@@ -272,11 +275,10 @@ mod tempdir {
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
+    /// 并行测试共用进程号，时钟精度也不足以区分，用递增计数保证目录互不相同。
     fn rand() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -401,6 +403,37 @@ async fn rename_and_delete_keep_item_id() {
     assert!(changes
         .iter()
         .any(|c| matches!(c, Change::Delete(d) if *d == one)));
+}
+
+#[tokio::test]
+async fn rename_before_upload_targets_new_key() {
+    let mem = Arc::new(Mem::default());
+    mem.put("data/a.txt", Bytes::from_static(b"old"), Default::default())
+        .await
+        .unwrap();
+    let (e, _d) = setup(mem.clone(), 1024);
+    // 新建文件，写完未上传就改名
+    let f = e.vfs.create_file(ItemId::ROOT, "draft.txt").await.unwrap();
+    let p = e.writeback.open_for_write(f.id).await.unwrap();
+    std::fs::write(&p, b"new file").unwrap();
+    e.writeback.enqueue(f.id).await.unwrap();
+    let d = e.vfs.mkdir(ItemId::ROOT, "docs").await.unwrap();
+    e.vfs.rename(f.id, d.id, "final.txt").await.unwrap();
+    // 已有文件，修改后未上传就改名：远端旧内容先被移走，再以新内容覆盖新键
+    let a = resolve(&e, "a.txt").await;
+    let p = e.writeback.open_for_write(a).await.unwrap();
+    std::fs::write(&p, b"edited").unwrap();
+    e.writeback.enqueue(a).await.unwrap();
+    e.vfs.rename(a, ItemId::ROOT, "b.txt").await.unwrap();
+    e.resume_uploads().await.unwrap();
+
+    let objs = mem.objects.lock().unwrap();
+    assert_eq!(&objs["data/docs/final.txt"].0[..], b"new file");
+    assert_eq!(&objs["data/b.txt"].0[..], b"edited");
+    assert!(!objs.contains_key("data/draft.txt"));
+    assert!(!objs.contains_key("data/a.txt"));
+    drop(objs);
+    assert_eq!(e.vfs.get(a).unwrap().remote_key, "data/b.txt");
 }
 
 fn setup_with(mem: Arc<Mem>, cfg: MountConfig) -> (Engine, tempdir::Dir) {

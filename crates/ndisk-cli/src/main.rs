@@ -239,18 +239,26 @@ async fn main() -> Result<()> {
 }
 
 async fn open_engine(cfg: &MountConfig, dirs: AppDirs) -> Result<Engine> {
+    // 骨架阶段：密钥从环境变量 NDISK_SECRET（兼容旧名 NDISK_S3_SECRET）读取；正式版走系统凭据库。
+    let secret = std::env::var("NDISK_SECRET")
+        .or_else(|_| std::env::var("NDISK_S3_SECRET"))
+        .ok();
+    let proxy = cfg.network().proxy;
     let backend: Arc<dyn ndisk_core::Backend> = match &cfg.backend {
         BackendConfig::S3(s3) => {
-            // 骨架阶段：静态密钥从环境变量 NDISK_S3_SECRET 读取；正式版走系统凭据库。
-            let secret = std::env::var("NDISK_S3_SECRET").ok();
-            Arc::new(
-                ndisk_backend_s3::S3Backend::connect(s3, secret, cfg.network().proxy.as_deref())
-                    .await?,
+            Arc::new(ndisk_backend_s3::S3Backend::connect(s3, secret, proxy.as_deref()).await?)
+        }
+        BackendConfig::Opendal {
+            scheme, options, ..
+        } => Arc::new(
+            ndisk_backend_opendal::OpendalBackend::connect(
+                scheme,
+                options,
+                secret,
+                proxy.as_deref(),
             )
-        }
-        BackendConfig::Opendal { scheme, .. } => {
-            anyhow::bail!("backend '{scheme}' not implemented yet")
-        }
+            .await?,
+        ),
     };
     Ok(Engine::open(cfg.clone(), backend, dirs.data, dirs.cache)?)
 }

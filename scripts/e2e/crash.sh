@@ -1,7 +1,7 @@
 #!/bin/bash
 # 模拟上传中进程崩溃，重挂载后续传。
 set -u
-export NDISK_S3_SECRET=testsecret RUST_LOG=info,aws_config=warn,aws_smithy_runtime=warn
+export NDISK_SECRET=testsecret RUST_LOG=info,aws_config=warn,aws_smithy_runtime=warn
 BIN=/src/target-linux/debug/ndisk; CFG=/test/cfg.toml; MNT=/mnt/ndisk; CACHE=/tmp/ndisk-crash; S3=/s3data/test
 fail=0; check() { if [ "$1" = "0" ]; then echo "PASS: $2"; else echo "FAIL: $2"; fail=1; fi; }
 fusermount3 -u $MNT 2>/dev/null; rm -rf $CACHE $S3/crash.bin; mkdir -p $MNT $CACHE

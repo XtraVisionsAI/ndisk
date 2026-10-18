@@ -21,7 +21,7 @@ cargo run -p ndisk-cli -- --help
 
 ```sh
 ndisk config > my.toml            # 生成配置模板后修改 bucket / endpoint / auth
-export NDISK_S3_SECRET=...        # 骨架阶段静态密钥从环境变量读取
+export NDISK_SECRET=...           # 骨架阶段密钥从环境变量读取（S3 / OpenDAL 后端通用）
 mkdir -p ~/mnt/s3
 ndisk -c my.toml mount ~/mnt/s3   # 前台运行，fusermount3 -u ~/mnt/s3 卸载
 ```

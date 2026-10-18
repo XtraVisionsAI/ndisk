@@ -135,11 +135,7 @@ impl Writeback {
         let result: Result<Entry> =
             if size < self.cfg.multipart_threshold || !backend.capabilities().multipart {
                 self.sched.upload_limit.acquire(size).await;
-                let data = Bytes::from(tokio::fs::read(&path).await?);
-                retry(5, || {
-                    backend.put(&rec.remote_key, data.clone(), opts.clone())
-                })
-                .await
+                retry(5, || backend.put_file(&rec.remote_key, &path, opts.clone())).await
             } else {
                 self.multipart(&mut rec, &path, size, opts).await
             };

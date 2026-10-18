@@ -78,11 +78,16 @@ fn default_log_filter() -> String {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendConfig {
     S3(S3Config),
-    /// 预留给 OpenDAL 接入的其他后端。
+    /// 经 Apache OpenDAL 接入的其他后端（`oss`、`webdav`、`dropbox`…）。
+    /// `options` 为该服务的 OpenDAL 配置项（如 `endpoint`、`bucket`、`root`），不含密钥；
+    /// 密钥存在系统凭据库的 `secret_ref` 条目里：纯字符串填入该服务的默认密钥项，
+    /// JSON 对象则按键合并进 `options`。挂载子路径用 `root` 选项表达。
     Opendal {
         scheme: String,
         #[serde(default)]
         options: std::collections::BTreeMap<String, String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_ref: Option<String>,
     },
 }
 

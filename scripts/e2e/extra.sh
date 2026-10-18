@@ -1,7 +1,7 @@
 #!/bin/bash
 # 补充端到端测试：非 ASCII 文件名、分片服务端复制、HTTP 代理、缓存策略与 TTL 回收。
 set -u
-export NDISK_S3_SECRET=testsecret RUST_LOG=info,aws_config=warn,aws_smithy_runtime=warn
+export NDISK_SECRET=testsecret RUST_LOG=info,aws_config=warn,aws_smithy_runtime=warn
 BIN=/src/target-linux/debug/ndisk; MNT=/mnt/ndisk; S3=/s3data/test
 fail=0; check() { if [ "$1" = "0" ]; then echo "PASS: $2"; else echo "FAIL: $2"; fail=1; fi; }
 mount_with() { # $1 cfg $2 cache

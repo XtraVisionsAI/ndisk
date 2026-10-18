@@ -218,6 +218,17 @@ impl MetaStore {
         Ok(())
     }
 
+    /// 待上传记录跟随节点改名：目标键换成新键，分片进度作废（分片绑定在旧键上），
+    /// If-Match 基准换成新键上对象的 etag。
+    pub fn rekey_upload(&self, id: ItemId, key: &str, base_etag: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE uploads SET remote_key = ?2, upload_id = NULL, parts_done = '[]', base_etag = ?3 WHERE item_id = ?1",
+            params![id.0, key, base_etag],
+        )?;
+        Ok(())
+    }
+
     pub fn mark_listed(&self, dir: ItemId) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

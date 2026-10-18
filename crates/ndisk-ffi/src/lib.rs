@@ -430,11 +430,17 @@ pub async fn open_session(
                     )
                     .await?,
                 ),
-                BackendConfig::Opendal { scheme, .. } => {
-                    return Err(ndisk_core::Error::Config(format!(
-                        "backend '{scheme}' not implemented"
-                    )))
-                }
+                BackendConfig::Opendal {
+                    scheme, options, ..
+                } => Arc::new(
+                    ndisk_backend_opendal::OpendalBackend::connect(
+                        scheme,
+                        options,
+                        secret,
+                        cfg.network().proxy.as_deref(),
+                    )
+                    .await?,
+                ),
             };
             let engine = Arc::new(Engine::open(cfg, backend, data_dir, cache_dir)?);
             engine.resume_uploads().await?;

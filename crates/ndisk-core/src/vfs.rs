@@ -204,7 +204,8 @@ impl Vfs {
         Ok(())
     }
 
-    /// 重命名/移动。S3 无原生 rename：文件走 copy+delete，目录递归。ItemId 保持不变。
+    /// 重命名/移动，ItemId 保持不变。文件交给后端 rename（原生 MOVE 或 copy+delete），
+    /// 目录逐个递归：OpenDAL 等后端的 rename 只接受文件。
     pub async fn rename(&self, id: ItemId, new_parent: ItemId, new_name: &str) -> Result<Node> {
         let n = self.get(id)?;
         if let Some(existing) = self.meta.lookup(new_parent, new_name)? {
@@ -214,13 +215,19 @@ impl Vfs {
         }
         let np = self.get(new_parent)?;
         let new_key = self.remote_key(&self.dir_key(&np), new_name, n.kind);
+        if new_key == n.remote_key {
+            return self.get(id);
+        }
         match n.kind {
             Kind::File => {
-                if n.etag.is_some() {
-                    self.backend.copy(&n.remote_key, &new_key).await?;
-                    self.backend.delete(&n.remote_key).await?;
-                }
+                let moved = if n.etag.is_some() {
+                    Some(self.backend.rename(&n.remote_key, &new_key).await?)
+                } else {
+                    None
+                };
                 self.meta.rename(id, new_parent, new_name, &new_key)?;
+                self.follow_upload(id, &new_key, moved.as_ref().and_then(|e| e.etag.as_deref()))
+                    .await?;
             }
             Kind::Dir => {
                 let children = self.list(id, true).await?;
@@ -233,6 +240,17 @@ impl Vfs {
             }
         }
         self.get(id)
+    }
+
+    /// 待上传记录跟随节点改名。已开始的分片上传绑定在旧键上，先中止。
+    async fn follow_upload(&self, id: ItemId, key: &str, base_etag: Option<&str>) -> Result<()> {
+        let Some(rec) = self.meta.upload_get(id)? else {
+            return Ok(());
+        };
+        if let Some(up) = &rec.upload_id {
+            let _ = self.backend.multipart_abort(&rec.remote_key, up).await;
+        }
+        self.meta.rekey_upload(id, key, base_etag)
     }
 
     pub fn changes_since(&self, anchor: ChangeAnchor) -> Result<(Vec<Change>, ChangeAnchor)> {

@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 ndisk-core = { workspace = true }
 ndisk-backend-s3 = { workspace = true }
+ndisk-backend-opendal = { workspace = true }
 ndisk-fuse = { path = "../ndisk-fuse" }
 tokio = { workspace = true }
 anyhow = { workspace = true }

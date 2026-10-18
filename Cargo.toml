@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/ndisk-core",
     "crates/ndisk-backend-s3",
+    "crates/ndisk-backend-opendal",
     "crates/ndisk-cli",
     "crates/ndisk-fuse",
     "crates/ndisk-ffi",
@@ -18,6 +19,7 @@ rust-version = "1.93"
 [workspace.dependencies]
 ndisk-core = { path = "crates/ndisk-core" }
 ndisk-backend-s3 = { path = "crates/ndisk-backend-s3" }
+ndisk-backend-opendal = { path = "crates/ndisk-backend-opendal" }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"] }
 async-trait = "0.1"
