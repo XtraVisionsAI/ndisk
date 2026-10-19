@@ -99,6 +99,21 @@ pub trait Backend: Send + Sync {
 | mtime / 权限 | 存在用户元数据 `x-amz-meta-mtime` 等，兼容 s3fs 字段名；权限位不强求保存 |
 | 冲突检测 | 上传时带 `If-Match: <本地已知 etag>`；返回 412 则保留本地为 `name (conflicted copy YYYY-MM-DD).ext` 并拉取远端版本 |
 
+### 3.2.1 OpenDAL 后端（OSS / WebDAV / Dropbox）
+
+`ndisk-backend-opendal` 用 Apache OpenDAL 0.59 一次接入多种服务，配置为 `type = "opendal"`、`scheme`、`options`（即 OpenDAL 的服务配置项，`root` 表示挂载子路径）与 `secret_ref`。钥匙串中的密钥可为纯字符串（填入该服务默认密钥项：WebDAV `password`、OSS `access_key_secret`、Dropbox 有 `client_id` 时为 `refresh_token`，否则为 `access_token`），或 JSON 对象按键合并进选项。
+
+| 能力 | 处理 |
+|---|---|
+| 列目录 | OpenDAL lister（WebDAV 为 PROPFIND Depth 1），过滤掉目录自身；一次返回整页 |
+| ETag | 去掉 `W/` 与引号后使用：Apache 在 PROPFIND 返回弱 ETag、HEAD 返回强 ETag，不统一会被误判为冲突；写入返回的元数据不全时补一次 stat |
+| 条件写入 | 服务原生支持 `if_match` / `if_not_exists` 时直接用；否则（WebDAV、Dropbox、OSS 的 if_match）先 stat 比对版本键再写，有竞争窗口，但能覆盖"另一台设备改过"的常见场景 |
+| 上传 | 支持分片写入的服务（OSS）经 `put_file` 按 8 MiB 流式写；WebDAV / Dropbox 只接受一次性写入，整文件读入内存后 PUT。分片续传需要显式 upload id，OpenDAL 不暴露，因此这些后端不支持跨重启续传，失败后整体重传 |
+| rename | 文件用原生 MOVE / move（OSS 为 copy+delete）；OpenDAL 的 rename 不接受目录，目录由 vfs 逐个子项递归 |
+| 代理 | 每个 Operator 注入独立的 reqwest 客户端（`network.proxy` 取值同 S3），另加 120 s 请求 / 60 s IO 超时层 |
+
+S3 兼容服务（含阿里云 OSS 的 S3 接口）在界面中仍走原生 S3 后端；原生 OSS（STS、RAM 角色）目前只在 CLI 配置中提供。
+
 ### 3.3 缓存
 
 **元数据缓存**（SQLite）
@@ -249,7 +264,7 @@ ndisk/
 |---|---|---|
 | M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 S3 兼容服务读写，进程被杀后重挂载上传续传。**已完成**（2026-10-16，见 `scripts/e2e`）|
 | M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**基本完成**（2026-10-16）：读写、角标、右键动作、TTL 驱逐、远端变更轮询在真机确认，冲突副本有单元测试，App 显示状态；剩余：共享动态框架减体积 |
-| M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试 |
+| M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试。**基本完成**（2026-10-19）：WebDAV 在 Docker（Apache mod_dav）中复跑全部 25 项 FUSE 检查通过，菜单栏 App 可添加 WebDAV / Dropbox 挂载；OSS、Dropbox 尚待真实账号验证；Dropbox 的 OAuth 授权流程（免手动生成 token）待做 |
 | M4 | Windows Cloud Files API | 资源管理器中占位符、按需下载、角标 |
 
 ## 7. 待决事项

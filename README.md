@@ -26,9 +26,27 @@ mkdir -p ~/mnt/s3
 ndisk -c my.toml mount ~/mnt/s3   # 前台运行，fusermount3 -u ~/mnt/s3 卸载
 ```
 
+WebDAV / Dropbox / 原生 OSS 走 OpenDAL 后端，配置示例（密钥同样经 `NDISK_SECRET` 提供）：
+
+```toml
+id = "nas"
+display_name = "NAS"
+
+[backend]
+type = "opendal"
+scheme = "webdav"            # 或 dropbox / oss
+secret_ref = "env"
+
+[backend.options]            # OpenDAL 的服务配置项
+endpoint = "https://nas.local/dav"
+username = "me"
+root = "/"
+```
+
 运行时依赖 `fuse3`（提供 fusermount3）。端到端测试在 Docker 中进行：`scripts/e2e/e2e.sh`，
 它会启动 versitygw 作为 S3 兼容服务，覆盖读写、分片上传、重命名、删除、外部变更可见性、
-上传中 SIGKILL 后重挂载续传、非 ASCII 文件名、分片服务端复制、HTTP 代理、缓存策略与 TTL 回收。
+上传中 SIGKILL 后重挂载续传、非 ASCII 文件名、分片服务端复制、HTTP 代理、缓存策略与 TTL 回收；
+随后在容器内起 Apache mod_dav，用 WebDAV 后端复跑同一套读写检查（`scripts/e2e/e2e.sh webdav` 只跑这一段）。
 
 ## macOS App 与 File Provider 扩展
 

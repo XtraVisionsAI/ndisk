@@ -6,6 +6,7 @@
 //!   Swift 侧直接 `await`，不会阻塞 File Provider 的回调线程；
 //! - 读元数据（`item`、`changes_since`）只查本地 SQLite，同步返回。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
@@ -314,6 +315,83 @@ pub fn parse_s3_config(config_toml: String) -> Result<S3MountSpec> {
         endpoint: s3.endpoint.clone(),
         force_path_style: s3.force_path_style,
         auth,
+        policy_override: cfg.overrides.policy.map(Into::into),
+        read_only: cfg.read_only,
+    })
+}
+
+/// 经 OpenDAL 接入的挂载（WebDAV、Dropbox、原生 OSS）的界面视图。
+/// `options` 是该服务的 OpenDAL 配置项（`endpoint`、`username`、`root`…），不含密钥；
+/// 密钥存钥匙串，格式见 `BackendConfig::Opendal`。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct OpendalMountSpec {
+    pub id: String,
+    pub display_name: String,
+    /// `webdav` / `dropbox` / `oss`。
+    pub scheme: String,
+    pub options: HashMap<String, String>,
+    pub policy_override: Option<CachePolicyFfi>,
+    pub read_only: bool,
+}
+
+/// 挂载配置的后端类型：`s3` 或 OpenDAL 的 scheme。编辑时据此选择表单。
+#[uniffi::export]
+pub fn mount_scheme(config_toml: String) -> Result<String> {
+    Ok(match MountConfig::from_toml(&config_toml)?.backend {
+        BackendConfig::S3(_) => "s3".into(),
+        BackendConfig::Opendal { scheme, .. } => scheme,
+    })
+}
+
+#[uniffi::export]
+pub fn render_opendal_config(spec: OpendalMountSpec) -> Result<String> {
+    if !ndisk_backend_opendal::SCHEMES.contains(&spec.scheme.as_str()) {
+        return Err(NdiskError::Config {
+            message: format!("unsupported scheme '{}'", spec.scheme),
+        });
+    }
+    let options = spec
+        .options
+        .into_iter()
+        .map(|(k, v)| (k, v.trim().to_string()))
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    let cfg = MountConfig {
+        backend: BackendConfig::Opendal {
+            scheme: spec.scheme,
+            options,
+            secret_ref: Some(secret_ref(&spec.id)),
+        },
+        id: spec.id,
+        display_name: spec.display_name,
+        read_only: spec.read_only,
+        overrides: ndisk_core::config::MountOverrides {
+            policy: spec.policy_override.map(Into::into),
+        },
+        cache: None,
+        network: None,
+    };
+    cfg.validate()?;
+    Ok(cfg.to_toml()?)
+}
+
+/// 解析 OpenDAL 挂载配置（编辑时回填）。S3 挂载返回 Unsupported。
+#[uniffi::export]
+pub fn parse_opendal_config(config_toml: String) -> Result<OpendalMountSpec> {
+    let cfg = MountConfig::from_toml(&config_toml)?;
+    let BackendConfig::Opendal {
+        scheme, options, ..
+    } = cfg.backend
+    else {
+        return Err(NdiskError::Unsupported {
+            message: "not an OpenDAL mount".into(),
+        });
+    };
+    Ok(OpendalMountSpec {
+        id: cfg.id,
+        display_name: cfg.display_name,
+        scheme,
+        options: options.into_iter().collect(),
         policy_override: cfg.overrides.policy.map(Into::into),
         read_only: cfg.read_only,
     })
@@ -810,6 +888,36 @@ mod tests {
             policy_override: Some(CachePolicyFfi::Ttl { seconds: 3600 }),
             read_only: false,
         }
+    }
+
+    #[test]
+    fn opendal_render_parse_roundtrip() {
+        let spec = OpendalMountSpec {
+            id: "dav".into(),
+            display_name: "NAS".into(),
+            scheme: "webdav".into(),
+            options: HashMap::from([
+                ("endpoint".into(), "https://nas.local/dav".into()),
+                ("username".into(), "me".into()),
+                ("root".into(), " ".into()),
+            ]),
+            policy_override: None,
+            read_only: true,
+        };
+        let toml = render_opendal_config(spec.clone()).unwrap();
+        assert!(toml.contains("secret_ref = \"keychain:dav\""));
+        assert_eq!(mount_scheme(toml.clone()).unwrap(), "webdav");
+        let back = parse_opendal_config(toml).unwrap();
+        assert!(!back.options.contains_key("root"), "blank options dropped");
+        assert_eq!(back.options["username"], "me");
+        assert!(back.read_only);
+        let mut bad = spec;
+        bad.scheme = "ftp".into();
+        assert!(render_opendal_config(bad).is_err());
+        assert_eq!(
+            mount_scheme(render_s3_config(super::tests::spec()).unwrap()).unwrap(),
+            "s3"
+        );
     }
 
     #[test]

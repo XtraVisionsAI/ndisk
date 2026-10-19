@@ -46,10 +46,10 @@ final class MountsModel: ObservableObject {
     // MARK: 挂载增删改
 
     /// 新建或保存挂载。编辑时 `secret` 为空表示保留原密钥。
-    func save(spec: S3MountSpec, secret: String?) async {
+    func save(spec: MountSpecAny, secret: String?) async {
         guard let store else { return }
         do {
-            let toml = try renderS3Config(spec: spec)
+            let toml = try spec.render()
             let mount = SharedStore.Mount(id: spec.id, displayName: spec.displayName)
             try store.save(mount: mount, configToml: toml, secret: secret)
             // 同 id 再次 add 会更新显示名；首次 add 注册 domain。
@@ -63,9 +63,11 @@ final class MountsModel: ObservableObject {
         }
     }
 
-    func existingSpec(_ m: SharedStore.Mount) -> S3MountSpec? {
-        guard let store, let toml = try? String(contentsOf: store.configURL(m.id), encoding: .utf8) else { return nil }
-        return try? parseS3Config(configToml: toml)
+    func existingSpec(_ m: SharedStore.Mount) -> MountSpecAny? {
+        guard let store, let toml = try? String(contentsOf: store.configURL(m.id), encoding: .utf8),
+              let scheme = try? mountScheme(configToml: toml) else { return nil }
+        if scheme == "s3" { return (try? parseS3Config(configToml: toml)).map(MountSpecAny.s3) }
+        return (try? parseOpendalConfig(configToml: toml)).map(MountSpecAny.opendal)
     }
 
     func remove(_ m: SharedStore.Mount) {
@@ -120,11 +122,11 @@ final class MountsModel: ObservableObject {
     }
 
     /// 用临时目录打开一次会话并列出根目录，验证配置与凭据。
-    func testConnection(spec: S3MountSpec, secret: String?) async -> Result<Int, Error> {
+    func testConnection(spec: MountSpecAny, secret: String?) async -> Result<Int, Error> {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("ndisk-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }
         do {
-            let toml = try renderS3Config(spec: spec)
+            let toml = try spec.render()
             // 编辑时未重新输入密钥：用钥匙串里的现有密钥测试。
             let effectiveSecret = (secret?.isEmpty ?? true) ? store?.secret(for: spec.id) : secret
             let s = try await openSession(configToml: toml, settingsToml: store?.settingsToml(), mountCount: 1,
@@ -178,6 +180,7 @@ final class MountsModel: ObservableObject {
 
     /// 处理 `ndisk://` URL（开发自动化与脚本使用）：
     ///   ndisk://add?id=…&name=…&bucket=…&endpoint=…&access_key=…&secret=…&ttl=3600&path_style=1&region=…&prefix=…
+    ///   ndisk://add?id=…&scheme=webdav&endpoint=…&username=…&secret=…   （OpenDAL 后端，其余参数即选项）
     ///   ndisk://remove?id=…   ndisk://signal?id=…
     func handle(url: URL) async {
         guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
@@ -185,13 +188,24 @@ final class MountsModel: ObservableObject {
         for item in comps.queryItems ?? [] { q[item.name] = item.value ?? "" }
         switch comps.host {
         case "add":
-            guard let id = q["id"], let bucket = q["bucket"] else { lastError = "ndisk://add 缺少 id 或 bucket"; return }
-            let auth: S3AuthSpec = (q["access_key"]?.isEmpty ?? true) ? .default : .static(accessKeyId: q["access_key"]!)
-            let spec = S3MountSpec(
-                id: id, displayName: q["name"] ?? id, bucket: bucket, prefix: q["prefix"] ?? "",
-                region: q["region"] ?? "us-east-1", endpoint: q["endpoint"], forcePathStyle: q["path_style"] == "1",
-                auth: auth, policyOverride: q["ttl"].flatMap { UInt64($0) }.map { .ttl(seconds: $0) },
-                readOnly: q["read_only"] == "1")
+            guard let id = q["id"] else { lastError = "ndisk://add 缺少 id"; return }
+            let policy: CachePolicyFfi? = q["ttl"].flatMap { UInt64($0) }.map { .ttl(seconds: $0) }
+            let spec: MountSpecAny
+            if let scheme = q["scheme"], scheme != "s3" {
+                // 其余参数原样作为 OpenDAL 选项，如 endpoint、username、root。
+                let reserved: Set = ["id", "name", "scheme", "secret", "ttl", "read_only"]
+                spec = .opendal(OpendalMountSpec(
+                    id: id, displayName: q["name"] ?? id, scheme: scheme,
+                    options: q.filter { !reserved.contains($0.key) },
+                    policyOverride: policy, readOnly: q["read_only"] == "1"))
+            } else {
+                guard let bucket = q["bucket"] else { lastError = "ndisk://add 缺少 bucket"; return }
+                let auth: S3AuthSpec = (q["access_key"]?.isEmpty ?? true) ? .default : .static(accessKeyId: q["access_key"]!)
+                spec = .s3(S3MountSpec(
+                    id: id, displayName: q["name"] ?? id, bucket: bucket, prefix: q["prefix"] ?? "",
+                    region: q["region"] ?? "us-east-1", endpoint: q["endpoint"], forcePathStyle: q["path_style"] == "1",
+                    auth: auth, policyOverride: policy, readOnly: q["read_only"] == "1"))
+            }
             await save(spec: spec, secret: q["secret"])
             log.info("url add \(id, privacy: .public): \(self.lastError ?? "ok", privacy: .public)")
         case "remove":
@@ -211,6 +225,33 @@ final class MountsModel: ObservableObject {
             NSFileProviderManager(for: domain(m))?.signalEnumerator(for: .workingSet) { [log] error in
                 if let error { log.error("signal \(m.id, privacy: .public) failed: \(String(describing: error), privacy: .public)") }
             }
+        }
+    }
+}
+
+/// 两类挂载配置的统一视图。
+enum MountSpecAny {
+    case s3(S3MountSpec)
+    case opendal(OpendalMountSpec)
+
+    var id: String {
+        switch self {
+        case .s3(let s): return s.id
+        case .opendal(let s): return s.id
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .s3(let s): return s.displayName
+        case .opendal(let s): return s.displayName
+        }
+    }
+
+    func render() throws -> String {
+        switch self {
+        case .s3(let s): return try renderS3Config(spec: s)
+        case .opendal(let s): return try renderOpendalConfig(spec: s)
         }
     }
 }
