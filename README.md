@@ -1,5 +1,7 @@
 # ndisk
 
+[![CI](https://github.com/XtraVisionsAI/ndisk/actions/workflows/ci.yml/badge.svg)](https://github.com/XtraVisionsAI/ndisk/actions/workflows/ci.yml)
+
 把 S3 / OSS / WebDAV / Dropbox 等网络存储挂载为本地文件位置，带本地缓存与断点续传。
 
 - macOS：File Provider（Finder 侧栏位置，原生角标与按需下载）
