@@ -12,6 +12,8 @@ use crate::Result;
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
+-- WAL 下 NORMAL 不会损坏数据库，断电最多丢最近几次提交（可从远端重建）。
+PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS nodes (
@@ -125,6 +127,25 @@ impl MetaStore {
         .map_err(Into::into)
     }
 
+    /// 按名字排序的一页子项：名字大于 `after` 的前 `limit` 个（走 `(parent_id, name)` 唯一索引）。
+    pub fn children_page(
+        &self,
+        parent: ItemId,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Node>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, parent_id, name, kind, size, mtime, etag, remote_key, policy, pinned FROM nodes
+             WHERE parent_id = ?1 AND name > ?2 ORDER BY name LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(
+            params![parent.0, after.unwrap_or(""), limit as i64],
+            row_to_node,
+        )?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub fn children(&self, parent: ItemId) -> Result<Vec<Node>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -143,50 +164,19 @@ impl MetaStore {
         remote_key: &str,
     ) -> Result<ItemId> {
         let conn = self.conn.lock().unwrap();
-        let mtime = e.mtime.map(to_secs);
-        // 列目录会对每个条目调用 upsert；只有内容真正变化时才写变更日志，
-        // 否则 File Provider 每次刷新都会重新枚举所有条目。
-        let existing: Option<ExistingRow> = conn
-            .query_row(
-                "SELECT id, kind, size, mtime, etag, remote_key FROM nodes WHERE parent_id = ?1 AND name = ?2",
-                params![parent.0, name],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
-            )
-            .optional()?;
-        let unchanged = matches!(&existing, Some((_, k, sz, mt, tag, key))
-            if *k == kind_to_i(e.kind) && *sz == e.size as i64 && *mt == mtime && *tag == e.etag && key == remote_key);
-        conn.execute(
-            "INSERT INTO nodes(parent_id, name, kind, size, mtime, etag, remote_key, stat_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(parent_id, name) DO UPDATE SET
-               kind = excluded.kind, size = excluded.size, mtime = excluded.mtime,
-               etag = excluded.etag, remote_key = excluded.remote_key, stat_at = excluded.stat_at",
-            params![
-                parent.0,
-                name,
-                kind_to_i(e.kind),
-                e.size as i64,
-                mtime,
-                e.etag,
-                remote_key,
-                now()
-            ],
-        )?;
-        let id: i64 = match existing {
-            Some((id, ..)) => id,
-            None => conn.query_row(
-                "SELECT id FROM nodes WHERE parent_id = ?1 AND name = ?2",
-                params![parent.0, name],
-                |r| r.get(0),
-            )?,
-        };
-        if !unchanged {
-            conn.execute(
-                "INSERT INTO changes(item_id, deleted) VALUES (?1, 0)",
-                params![id],
-            )?;
+        upsert_in(&conn, parent, name, e, remote_key)
+    }
+
+    /// 同一目录下一批条目的 upsert，放在一个事务里：列大目录时逐条提交会被磁盘同步拖慢上百倍。
+    pub fn upsert_many(&self, parent: ItemId, entries: &[(String, Entry)]) -> Result<Vec<ItemId>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut ids = Vec::with_capacity(entries.len());
+        for (name, e) in entries {
+            ids.push(upsert_in(&tx, parent, name, e, &e.key)?);
         }
-        Ok(ItemId(id as u64))
+        tx.commit()?;
+        Ok(ids)
     }
 
     pub fn remove(&self, id: ItemId) -> Result<()> {
@@ -601,6 +591,60 @@ fn to_secs(t: SystemTime) -> i64 {
 }
 fn from_secs(s: i64) -> SystemTime {
     UNIX_EPOCH + std::time::Duration::from_secs(s.max(0) as u64)
+}
+
+/// 见 [`MetaStore::upsert`]。列目录会对每个条目调用；只有内容真正变化时才写入并记变更日志，
+/// 否则 File Provider 每次刷新都会重新枚举所有条目。
+fn upsert_in(
+    conn: &Connection,
+    parent: ItemId,
+    name: &str,
+    e: &Entry,
+    remote_key: &str,
+) -> Result<ItemId> {
+    let mtime = e.mtime.map(to_secs);
+    let existing: Option<ExistingRow> = conn
+        .prepare_cached(
+            "SELECT id, kind, size, mtime, etag, remote_key FROM nodes WHERE parent_id = ?1 AND name = ?2",
+        )?
+        .query_row(params![parent.0, name], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })
+        .optional()?;
+    if let Some((id, k, sz, mt, tag, key)) = &existing {
+        if *k == kind_to_i(e.kind)
+            && *sz == e.size as i64
+            && *mt == mtime
+            && *tag == e.etag
+            && key == remote_key
+        {
+            return Ok(ItemId(*id as u64));
+        }
+    }
+    conn.prepare_cached(
+        "INSERT INTO nodes(parent_id, name, kind, size, mtime, etag, remote_key, stat_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(parent_id, name) DO UPDATE SET
+           kind = excluded.kind, size = excluded.size, mtime = excluded.mtime,
+           etag = excluded.etag, remote_key = excluded.remote_key, stat_at = excluded.stat_at",
+    )?
+    .execute(params![
+        parent.0,
+        name,
+        kind_to_i(e.kind),
+        e.size as i64,
+        mtime,
+        e.etag,
+        remote_key,
+        now()
+    ])?;
+    let id: i64 = match existing {
+        Some((id, ..)) => id,
+        None => conn.last_insert_rowid(),
+    };
+    conn.prepare_cached("INSERT INTO changes(item_id, deleted) VALUES (?1, 0)")?
+        .execute(params![id])?;
+    Ok(ItemId(id as u64))
 }
 
 #[cfg(test)]

@@ -180,6 +180,13 @@ pub struct SessionStatus {
     pub materialized_items: u64,
 }
 
+/// 目录的一页子项。`next` 为下一页游标，`None` 表示已到末尾。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ItemPage {
+    pub items: Vec<ItemInfo>,
+    pub next: Option<String>,
+}
+
 /// 凭据方式（界面选项）。密钥本体存钥匙串，这里只有非敏感部分。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum S3AuthSpec {
@@ -634,6 +641,30 @@ impl Session {
             .into_iter()
             .map(|n| self.info(n).map_err(Into::into))
             .collect()
+    }
+
+    /// 分页列目录，供 File Provider 按 `suggestedPageSize` 分批枚举。`after` 为上一页返回的游标；
+    /// 只有第一页会（按 `force` 或目录 TTL）刷新远端。
+    pub async fn list_page(
+        &self,
+        dir: u64,
+        force: bool,
+        after: Option<String>,
+        limit: u32,
+    ) -> Result<ItemPage> {
+        let e = self.engine.clone();
+        let (nodes, next) = self
+            .run(async move {
+                e.vfs
+                    .list_page(ItemId(dir), force, after.as_deref(), limit as usize)
+                    .await
+            })
+            .await?;
+        let items = nodes
+            .into_iter()
+            .map(|n| self.info(n).map_err(Into::into))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(ItemPage { items, next })
     }
 
     pub async fn lookup(&self, parent: u64, name: String) -> Result<ItemInfo> {

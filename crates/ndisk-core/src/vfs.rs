@@ -89,14 +89,7 @@ impl Vfs {
         if d.kind != Kind::Dir {
             return Err(Error::NotADirectory(d.name));
         }
-        let fresh = match self.meta.listed_at(dir)? {
-            Some(t) => SystemTime::now()
-                .duration_since(t)
-                .map(|a| a < self.cfg.dir_ttl)
-                .unwrap_or(false),
-            None => false,
-        };
-        if force || !fresh {
+        if force || !self.dir_fresh(dir)? {
             self.refresh_dir(&d).await?;
         }
         let mut nodes = self.meta.children(dir)?;
@@ -106,20 +99,58 @@ impl Vfs {
         Ok(nodes)
     }
 
+    /// 分页列目录。第一页（`after` 为 `None`）按需刷新远端，后续页只读本地元数据，
+    /// 保证同一轮枚举看到的是同一份快照。返回下一页游标（本页最后一个名字），`None` 表示结束。
+    pub async fn list_page(
+        &self,
+        dir: ItemId,
+        force: bool,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<Node>, Option<String>)> {
+        let d = self.get(dir)?;
+        if d.kind != Kind::Dir {
+            return Err(Error::NotADirectory(d.name));
+        }
+        if after.is_none() && (force || !self.dir_fresh(dir)?) {
+            self.refresh_dir(&d).await?;
+        }
+        let limit = limit.max(1);
+        let mut nodes = self.meta.children_page(dir, after, limit)?;
+        for n in &mut nodes {
+            self.fill_local_state(n)?;
+        }
+        let next = (nodes.len() == limit)
+            .then(|| nodes.last().map(|n| n.name.clone()))
+            .flatten();
+        Ok((nodes, next))
+    }
+
+    fn dir_fresh(&self, dir: ItemId) -> Result<bool> {
+        Ok(match self.meta.listed_at(dir)? {
+            Some(t) => SystemTime::now()
+                .duration_since(t)
+                .map(|a| a < self.cfg.dir_ttl)
+                .unwrap_or(false),
+            None => false,
+        })
+    }
+
     async fn refresh_dir(&self, d: &Node) -> Result<()> {
         let key = self.dir_key(d);
         let mut seen = std::collections::HashSet::new();
         let mut cursor: Option<String> = None;
         loop {
             let page = self.backend.list(&key, cursor.as_deref()).await?;
-            for e in page.entries {
-                let name = e.name().to_string();
-                if name.is_empty() || e.key == key {
-                    continue; // 目录自身的标记对象
-                }
-                seen.insert(name.clone());
-                self.meta.upsert(d.id, &name, &e, &e.key)?;
-            }
+            let batch: Vec<(String, Entry)> = page
+                .entries
+                .into_iter()
+                .filter(|e| e.key != key) // 目录自身的标记对象
+                .map(|e| (e.name().to_string(), e))
+                .filter(|(name, _)| !name.is_empty())
+                .collect();
+            seen.extend(batch.iter().map(|(n, _)| n.clone()));
+            self.meta.upsert_many(d.id, &batch)?;
             cursor = page.next;
             if cursor.is_none() {
                 break;
