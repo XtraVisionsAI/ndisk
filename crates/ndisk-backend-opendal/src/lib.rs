@@ -32,6 +32,8 @@ pub struct OpendalBackend {
     op: Operator,
     scheme: &'static str,
     cap: Capability,
+    /// WebDAV 大文件绕过 OpenDAL 直接流式 PUT。
+    dav: Option<DavDirect>,
 }
 
 impl OpendalBackend {
@@ -53,6 +55,10 @@ impl OpendalBackend {
         {
             merge_secret(scheme, &mut opts, &s)?;
         }
+        let client = http_client(proxy)?;
+        let dav = (scheme == "webdav")
+            .then(|| DavDirect::new(&opts, client.clone()))
+            .transpose()?;
         let (scheme, op) = match scheme {
             "oss" => ("oss", Operator::from_iter::<services::Oss>(opts)),
             "webdav" => ("webdav", Operator::from_iter::<services::Webdav>(opts)),
@@ -69,7 +75,7 @@ impl OpendalBackend {
         let op = if scheme == "memory" {
             op
         } else {
-            let transport = HttpTransporter::new(ReqwestTransport::new(http_client(proxy)?));
+            let transport = HttpTransporter::new(ReqwestTransport::new(client));
             let ctx = op.context().with_http_transport(transport);
             op.with_context(ctx).layer(
                 TimeoutLayer::new()
@@ -78,7 +84,12 @@ impl OpendalBackend {
             )
         };
         let cap = op.info().capability();
-        let b = Self { op, scheme, cap };
+        let b = Self {
+            op,
+            scheme,
+            cap,
+            dav,
+        };
         // 及早暴露地址、凭据错误，而不是等到第一次列目录。
         b.op.list_with("/").limit(1).await.map_err(map_err)?;
         tracing::info!(scheme, "opendal backend connected");
@@ -216,7 +227,24 @@ impl Backend for OpendalBackend {
     }
 
     async fn put_file(&self, key: &str, path: &Path, opts: PutOptions) -> Result<Entry> {
-        // 不支持分片写入的服务（WebDAV、Dropbox）只接受一次性写入，OpenDAL 会拒绝第二次 write。
+        if let Some(dav) = &self.dav {
+            self.check_precondition(key, &opts).await?;
+            match dav.put_file(key, path, &opts).await {
+                // 父集合不存在：交给 OpenDAL 逐级 MKCOL 后重试一次。
+                Err(DavPutError::ParentMissing) => {
+                    if let Some(i) = key.rfind('/') {
+                        self.op.create_dir(&key[..=i]).await.map_err(map_err)?;
+                    }
+                    dav.put_file(key, path, &opts).await.map_err(Error::from)?;
+                }
+                r => r.map_err(Error::from)?,
+            }
+            return self
+                .stat_entry(key)
+                .await?
+                .ok_or_else(|| Error::NotFound(key.into()));
+        }
+        // 不支持分片写入的服务（Dropbox）只接受一次性写入，OpenDAL 会拒绝第二次 write。
         if !self.cap.write_can_multi {
             let data = Bytes::from(tokio::fs::read(path).await?);
             return self.put(key, data, opts).await;
@@ -453,6 +481,127 @@ fn map_err(e: opendal::Error) -> Error {
     }
 }
 
+/// 直连 WebDAV 的流式上传。OpenDAL 的 WebDAV 写入是一次性缓冲整块，大文件会占满内存
+/// （File Provider 扩展有内存上限）；这里用 reqwest 把文件作为流式请求体 PUT 上去。
+struct DavDirect {
+    client: reqwest::Client,
+    /// `endpoint` + `root`，以 `/` 结尾。
+    base: String,
+    auth: DavAuth,
+}
+
+enum DavAuth {
+    None,
+    Basic(String, Option<String>),
+    Bearer(String),
+}
+
+#[derive(Debug)]
+enum DavPutError {
+    ParentMissing,
+    Status(reqwest::StatusCode, String),
+    Io(std::io::Error),
+    Http(reqwest::Error),
+}
+
+impl From<DavPutError> for Error {
+    fn from(e: DavPutError) -> Self {
+        match e {
+            DavPutError::ParentMissing => Error::NotFound("parent collection".into()),
+            DavPutError::Status(s, key) => match s.as_u16() {
+                412 => Error::Conflict {
+                    key,
+                    expected: None,
+                    actual: None,
+                },
+                401 | 403 => Error::PermissionDenied(format!("PUT {key}: {s}")),
+                // 5xx、429 等交给上层退避重试。
+                _ => Error::backend(std::io::Error::other(format!("PUT {key}: {s}"))),
+            },
+            DavPutError::Io(e) => Error::Io(e),
+            DavPutError::Http(e) => Error::backend(e),
+        }
+    }
+}
+
+/// 路径段中需要编码的字符：除 RFC 3986 unreserved 外全部编码。
+const SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+impl DavDirect {
+    fn new(opts: &HashMap<String, String>, client: reqwest::Client) -> Result<Self> {
+        let endpoint = opts
+            .get("endpoint")
+            .map(|e| e.trim().trim_end_matches('/').to_string())
+            .filter(|e| !e.is_empty())
+            .ok_or_else(|| Error::Config("webdav: endpoint is required".into()))?;
+        let root = opts.get("root").map(String::as_str).unwrap_or("/");
+        let root = root.trim_matches('/');
+        let base = if root.is_empty() {
+            format!("{endpoint}/")
+        } else {
+            format!("{endpoint}/{}/", encode_path(root))
+        };
+        let auth = match (opts.get("token"), opts.get("username")) {
+            (Some(t), _) if !t.is_empty() => DavAuth::Bearer(t.clone()),
+            (_, Some(u)) if !u.is_empty() => {
+                DavAuth::Basic(u.clone(), opts.get("password").cloned())
+            }
+            _ => DavAuth::None,
+        };
+        Ok(Self { client, base, auth })
+    }
+
+    fn url(&self, key: &str) -> String {
+        format!("{}{}", self.base, encode_path(key))
+    }
+
+    async fn put_file(
+        &self,
+        key: &str,
+        path: &Path,
+        opts: &PutOptions,
+    ) -> std::result::Result<(), DavPutError> {
+        let f = tokio::fs::File::open(path).await.map_err(DavPutError::Io)?;
+        let len = f.metadata().await.map_err(DavPutError::Io)?.len();
+        let body =
+            reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::with_capacity(f, 256 * 1024));
+        let mut req = self
+            .client
+            .put(self.url(key))
+            .header(reqwest::header::CONTENT_LENGTH, len)
+            .body(body);
+        if let Some(ct) = &opts.content_type {
+            req = req.header(reqwest::header::CONTENT_TYPE, ct);
+        }
+        req = match &self.auth {
+            DavAuth::None => req,
+            DavAuth::Basic(u, p) => req.basic_auth(u, p.as_ref()),
+            DavAuth::Bearer(t) => req.bearer_auth(t),
+        };
+        let resp = req.send().await.map_err(DavPutError::Http)?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        // RFC 4918：父集合不存在时 PUT 返回 409。
+        if status == reqwest::StatusCode::CONFLICT {
+            return Err(DavPutError::ParentMissing);
+        }
+        Err(DavPutError::Status(status, key.to_string()))
+    }
+}
+
+fn encode_path(p: &str) -> String {
+    p.split('/')
+        .map(|seg| percent_encoding::utf8_percent_encode(seg, SEGMENT).to_string())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +626,27 @@ mod tests {
         .unwrap();
         assert_eq!(o["security_token"], "t");
         assert!(merge_secret("oss", &mut o, "{bad").is_err());
+    }
+
+    #[test]
+    fn dav_urls() {
+        let client = reqwest::Client::new();
+        let opts = |root: &str| {
+            HashMap::from([
+                ("endpoint".to_string(), "https://nas.local/dav/".to_string()),
+                ("root".to_string(), root.to_string()),
+                ("username".to_string(), "me".to_string()),
+            ])
+        };
+        let d = DavDirect::new(&opts("/"), client.clone()).unwrap();
+        assert_eq!(
+            d.url("a b/中文#?.txt"),
+            "https://nas.local/dav/a%20b/%E4%B8%AD%E6%96%87%23%3F.txt"
+        );
+        let d = DavDirect::new(&opts("/team space/"), client.clone()).unwrap();
+        assert_eq!(d.url("x.txt"), "https://nas.local/dav/team%20space/x.txt");
+        assert!(matches!(d.auth, DavAuth::Basic(ref u, None) if u == "me"));
+        assert!(DavDirect::new(&HashMap::new(), client).is_err());
     }
 
     #[test]

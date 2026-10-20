@@ -1979,9 +1979,11 @@ dependencies = [
  "ndisk-core",
  "opendal",
  "opendal-http-transport-reqwest",
+ "percent-encoding",
  "reqwest",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

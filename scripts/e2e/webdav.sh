@@ -25,3 +25,25 @@ rm -rf /davdata && mkdir -p /davdata && chown www-data:www-data /davdata && chmo
 apache2ctl -k restart 2>/dev/null || apache2ctl start
 for i in $(seq 1 20); do curl -fs -u testkey:testsecret -X PROPFIND -H 'Depth: 0' http://127.0.0.1/dav/ >/dev/null && break; sleep 0.3; done
 CFG=/test/cfg-webdav.toml S3=/davdata bash /test/run.sh
+rc=$?
+
+# 大文件流式上传：256 MiB 文件上传期间挂载进程的内存峰值（VmHWM）应远小于文件大小。
+BIN=/src/target-linux/debug/ndisk; MNT=/mnt/ndisk; CACHE=/tmp/ndisk-cache-big
+export NDISK_SECRET=testsecret
+check() { if [ "$1" = "0" ]; then echo "PASS: $2"; else echo "FAIL: $2"; rc=1; fi; }
+fusermount3 -u $MNT 2>/dev/null; rm -rf $CACHE; mkdir -p $MNT $CACHE
+$BIN -c /test/cfg-webdav.toml --cache-dir $CACHE --data-dir $CACHE/data mount $MNT > /test/mount-big.log 2>&1 &
+MPID=$!
+for i in $(seq 1 30); do mountpoint -q $MNT && break; sleep 0.2; done
+dd if=/dev/urandom of=/tmp/huge.bin bs=1M count=256 status=none
+cp /tmp/huge.bin $MNT/huge.bin
+for i in $(seq 1 240); do
+  [ -f /davdata/huge.bin ] && [ "$(stat -c %s /davdata/huge.bin)" = "$(stat -c %s /tmp/huge.bin)" ] && break; sleep 0.5
+done
+cmp -s /tmp/huge.bin /davdata/huge.bin; check $? "256MiB streamed upload content matches"
+hwm=$(awk '/VmHWM/ {print int($2/1024)}' /proc/$MPID/status)
+echo "mount process peak RSS: ${hwm} MiB"
+[ "$hwm" -lt 160 ]; check $? "upload memory stays bounded (peak ${hwm} MiB < 160 MiB)"
+fusermount3 -u $MNT; wait $MPID
+rm -f /tmp/huge.bin /davdata/huge.bin
+exit $rc

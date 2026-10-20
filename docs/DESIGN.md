@@ -108,7 +108,7 @@ pub trait Backend: Send + Sync {
 | 列目录 | OpenDAL lister（WebDAV 为 PROPFIND Depth 1），过滤掉目录自身；一次返回整页 |
 | ETag | 去掉 `W/` 与引号后使用：Apache 在 PROPFIND 返回弱 ETag、HEAD 返回强 ETag，不统一会被误判为冲突；写入返回的元数据不全时补一次 stat |
 | 条件写入 | 服务原生支持 `if_match` / `if_not_exists` 时直接用；否则（WebDAV、Dropbox、OSS 的 if_match）先 stat 比对版本键再写，有竞争窗口，但能覆盖"另一台设备改过"的常见场景 |
-| 上传 | 支持分片写入的服务（OSS）经 `put_file` 按 8 MiB 流式写；WebDAV / Dropbox 只接受一次性写入，整文件读入内存后 PUT。分片续传需要显式 upload id，OpenDAL 不暴露，因此这些后端不支持跨重启续传，失败后整体重传 |
+| 上传 | OSS 经 OpenDAL 按 8 MiB 分块流式写；WebDAV 绕过 OpenDAL，用 reqwest 以文件流作为请求体直接 PUT（256 MiB 文件上传时挂载进程峰值约 35 MiB，e2e 校验），父集合缺失（409）时 MKCOL 后重试；Dropbox 仍一次性写入（整文件读入内存）。这些后端都不支持跨重启续传，失败后整体重传 |
 | rename | 文件用原生 MOVE / move（OSS 为 copy+delete）；OpenDAL 的 rename 不接受目录，目录由 vfs 逐个子项递归 |
 | 代理 | 每个 Operator 注入独立的 reqwest 客户端（`network.proxy` 取值同 S3），另加 120 s 请求 / 60 s IO 超时层 |
 
