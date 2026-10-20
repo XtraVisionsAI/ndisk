@@ -20,6 +20,30 @@ final class NdiskKitTests: XCTestCase {
         }
     }
 
+    /// 登记表读不出时拒绝写入；只剩配置文件的挂载可被找回。
+    func testMountRegistryIsNeverClobbered() throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("ndiskkit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let store = SharedStore(root: tmp)
+        try store.save(mount: .init(id: "a", displayName: "A"), configToml: "x", secret: nil)
+        try store.save(mount: .init(id: "b", displayName: "B"), configToml: "y", secret: nil)
+        XCTAssertEqual(store.mounts().map(\.id), ["a", "b"])
+
+        // 登记表损坏：保存与删除都应失败，而不是用空列表覆盖
+        let corrupt = Data("{not json".utf8)
+        try corrupt.write(to: store.mountsFile)
+        XCTAssertThrowsError(try store.save(mount: .init(id: "c", displayName: "C"), configToml: "z", secret: nil))
+        XCTAssertThrowsError(try store.remove(mountId: "a"))
+        XCTAssertEqual(try Data(contentsOf: store.mountsFile), corrupt)
+
+        // 登记表丢失：配置文件仍在的挂载被识别为孤儿并可补回
+        try FileManager.default.removeItem(at: store.mountsFile)
+        XCTAssertEqual(store.orphanMountIds(), ["a", "b"])
+        try store.register(.init(id: "a", displayName: "A"))
+        XCTAssertEqual(store.orphanMountIds(), ["b"])
+        XCTAssertEqual(store.mounts().map(\.id), ["a"])
+    }
+
     /// 需要 S3 兼容服务：`NDISK_TEST_S3_ENDPOINT=http://127.0.0.1:7070 swift test`
     /// （凭据 testkey / testsecret，桶 test）。未设置时跳过。
     func testSessionRoundTripAgainstS3() async throws {
