@@ -56,6 +56,10 @@ rm $MNT/dir2/big2.bin && rmdir $MNT/dir2; check $? "rm file then rmdir"
 echo "external" > $S3/ext.txt; sleep 1
 ls $MNT > /dev/null; [ "$(cat $MNT/ext.txt 2>/dev/null)" = "external" ]; check $? "externally created object visible after dir TTL"
 
+# 6b. 未列举过的嵌套路径直接访问（逐级 lookup 走后端 stat；WebDAV 对目录名会回 301）
+mkdir -p $S3/extdir/sub && echo deep > $S3/extdir/sub/f.txt && chmod -R a+rwX $S3/extdir
+[ "$(cat $MNT/extdir/sub/f.txt 2>/dev/null)" = "deep" ]; check $? "lookup of not-yet-listed nested path"
+
 # 7. 卸载并用新缓存目录重新挂载读取
 fusermount3 -u $MNT; wait $MPID; check $? "unmount clean exit"
 rm -rf $CACHE; mkdir -p $CACHE

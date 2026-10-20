@@ -89,6 +89,14 @@ impl OpendalBackend {
         match self.op.stat(key).await {
             Ok(m) => Ok(Some(entry(key, &m))),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            // 按文件名查一个目录时，Apache 等 WebDAV 服务回 301 到 `key/`，OpenDAL 报为永久错误。
+            // 再按目录查一次；仍失败则报原错误。
+            Err(e) if !key.is_empty() && !key.ends_with('/') => {
+                match self.op.stat(&format!("{key}/")).await {
+                    Ok(m) if m.is_dir() => Ok(Some(entry(&format!("{key}/"), &m))),
+                    _ => Err(map_err(e)),
+                }
+            }
             Err(e) => Err(map_err(e)),
         }
     }
