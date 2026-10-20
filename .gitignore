@@ -1,7 +1,8 @@
 /target
 *.swp
 .DS_Store
-/src/target-linux
+# Docker e2e 容器内的构建目录（容器里 /src 即仓库根）
+/target-linux
 
 # Apple：由 apple/scripts/build-rust.sh 生成
 /apple/NdiskKit/Frameworks/
