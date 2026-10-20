@@ -29,12 +29,15 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     return
                 }
                 let s = try await ext.session()
-                // 初始页强制刷新，保证 Finder 打开目录时看到远端最新内容。
-                let force = page == NSFileProviderPage.initialPageSortedByName as NSFileProviderPage
+                // 初始页强制刷新，保证 Finder 打开目录时看到远端最新内容；后续页只读本地快照。
+                // 页标记是上一页最后一个名字（按名字排序），大目录按系统建议的页大小分批交付。
+                let initial = page == NSFileProviderPage.initialPageSortedByName as NSFileProviderPage
                     || page == NSFileProviderPage.initialPageSortedByDate as NSFileProviderPage
-                let items = try await s.list(dir: dir, force: force)
-                observer.didEnumerate(items.map(ext.makeItem))
-                observer.finishEnumerating(upTo: nil)
+                let after = initial ? nil : String(data: page.rawValue, encoding: .utf8)
+                let limit = UInt32(min(max(observer.suggestedPageSize ?? 500, 100), 2000))
+                let result = try await s.listPage(dir: dir, force: initial, after: after, limit: limit)
+                observer.didEnumerate(result.items.map(ext.makeItem))
+                observer.finishEnumerating(upTo: result.next.map { NSFileProviderPage(Data($0.utf8)) })
             } catch {
                 observer.finishEnumeratingWithError(fileProviderError(error))
             }

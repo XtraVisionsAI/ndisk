@@ -436,6 +436,77 @@ async fn rename_before_upload_targets_new_key() {
     assert_eq!(e.vfs.get(a).unwrap().remote_key, "data/b.txt");
 }
 
+#[tokio::test]
+async fn large_directory_lists_fast_and_pages_by_name() {
+    const N: usize = 20_000;
+    let mem = Arc::new(Mem::default());
+    {
+        let mut objs = mem.objects.lock().unwrap();
+        for i in 0..N {
+            objs.insert(format!("data/big/f{i:05}.txt"), (Bytes::new(), etag(b"")));
+        }
+    }
+    let (e, _d) = setup(mem.clone(), 1024);
+    let dir = resolve(&e, "big").await;
+    let t = std::time::Instant::now();
+    let all = e.vfs.list(dir, true).await.unwrap();
+    let first = t.elapsed();
+    assert_eq!(all.len(), N);
+    let t = std::time::Instant::now();
+    e.vfs.list(dir, true).await.unwrap();
+    let again = t.elapsed();
+    eprintln!("list {N} entries: first {first:?}, unchanged refresh {again:?}");
+    assert!(
+        again < std::time::Duration::from_secs(2),
+        "unchanged refresh must not rewrite rows"
+    );
+    let (_, anchor) = e.vfs.changes_since(ChangeAnchor(0)).unwrap();
+    e.vfs.list(dir, true).await.unwrap();
+    assert_eq!(
+        e.vfs.changes_since(anchor).unwrap().0.len(),
+        0,
+        "unchanged refresh records no changes"
+    );
+
+    // 分页：按名字游标遍历，覆盖全部且不重复
+    let mut seen = Vec::new();
+    let mut after: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        let (page, next) = e
+            .vfs
+            .list_page(dir, after.is_none(), after.as_deref(), 1000)
+            .await
+            .unwrap();
+        pages += 1;
+        seen.extend(page.into_iter().map(|n| n.name));
+        match next {
+            Some(n) => after = Some(n),
+            None => break,
+        }
+    }
+    assert_eq!(seen.len(), N);
+    // File Provider 每项还要查待上传与生效策略（FFI 的 ItemInfo），整体也需保持在亚秒级
+    let t = std::time::Instant::now();
+    let (page, _) = e.vfs.list_page(dir, false, None, N).await.unwrap();
+    for n in &page {
+        e.writeback.is_pending(n.id).unwrap();
+        e.effective_policy(n.id).unwrap();
+    }
+    eprintln!("item info for {N} entries: {:?}", t.elapsed());
+    assert!(
+        seen.windows(2).all(|w| w[0] < w[1]),
+        "sorted, no duplicates"
+    );
+    assert!((20..=21).contains(&pages));
+    let (tail, next) = e
+        .vfs
+        .list_page(dir, false, Some("f19999.txt"), 10)
+        .await
+        .unwrap();
+    assert!(tail.is_empty() && next.is_none());
+}
+
 fn setup_with(mem: Arc<Mem>, cfg: MountConfig) -> (Engine, tempdir::Dir) {
     let dir = tempdir::Dir::new();
     let e = Engine::open(cfg, mem, dir.path.join("data"), dir.path.join("cache")).unwrap();
