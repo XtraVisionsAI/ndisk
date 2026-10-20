@@ -26,7 +26,10 @@ opendal = { version = "0.59", default-features = false, features = [
 ] }
 # 构造带代理的 HTTP 客户端，注入到每个 Operator。
 opendal-http-transport-reqwest = "0.59.5"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy", "stream"] }
+# WebDAV 大文件直连流式 PUT（OpenDAL 的 WebDAV 写入只能整块缓冲）。
+tokio-util = { version = "0.7", features = ["io"] }
+percent-encoding = "2"
 
 [dev-dependencies]
 tokio = { workspace = true }
