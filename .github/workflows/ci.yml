@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  deny:
+    name: Licenses & dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 许可证、禁用项与来源是硬性约束（开源核心须保持商业友好）。
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources
+
+  advisories:
+    name: Security advisories
+    runs-on: ubuntu-latest
+    # 新公告随时会出现，与本次改动无关，不阻断合并，只提示。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
+  e2e:
+    name: Linux FUSE e2e (S3 + WebDAV)
+    runs-on: ubuntu-latest
+    needs: rust
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      # e2e.sh 把宿主机的 cargo 注册表挂进构建容器，复用下载。
+      - run: mkdir -p ~/.cargo/registry
+      - run: bash scripts/e2e/e2e.sh
+      - if: failure()
+        run: |
+          docker exec ndisk-dev sh -c 'tail -n 100 /test/mount.log' || true
+          docker logs ndisk-s3 2>&1 | tail -n 50 || true
+
+  macos:
+    name: macOS app (unsigned build)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: brew install xcodegen
+      # 生成 xcframework 与 Swift 绑定，再不签名编译 App 与 File Provider 扩展。
+      - run: apple/scripts/build-app.sh --unsigned
+      - run: swift test --package-path apple/NdiskKit
