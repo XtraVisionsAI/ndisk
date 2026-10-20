@@ -14,8 +14,10 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 tracing = { workspace = true }
 aws-config = { version = "1", features = ["behavior-version-latest", "sso"] }
-aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-sts = "1"
+# 不启用默认的 `rustls` feature：它带入旧版 hyper 0.14 / rustls 0.21 栈（有未修复的安全公告）。
+# 新版 hyper 1 + rustls 0.23 客户端由 `default-https-client` 提供，代理客户端也基于它。
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+aws-sdk-sts = { version = "1", default-features = false, features = ["behavior-version-latest", "sigv4a", "default-https-client", "rt-tokio"] }
 serde_json = { workspace = true }
 aws-credential-types = "1"
 aws-smithy-types = "1"

@@ -1,3 +1,5 @@
 [licenses]
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "MPL-2.0", "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CDLA-Permissive-2.0", "OpenSSL"]
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "MPL-2.0", "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CDLA-Permissive-2.0", "OpenSSL",
+    # 公有领域贡献声明，无署名与传染要求（tiny-keccak，经 OpenDAL 间接引入）。
+    "CC0-1.0"]
 confidence-threshold = 0.9
