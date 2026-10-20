@@ -21,7 +21,9 @@ for a in "$@"; do
 done
 # Xcode 环境
 if [ "${CONFIGURATION:-}" = "Release" ]; then PROFILE=release; fi
-if [ -n "${ARCHS:-}" ] && [[ "$ARCHS" == *x86_64* ]] && [[ "$ARCHS" == *arm64* ]]; then UNIVERSAL=1; fi
+# Xcode 的 Debug 默认 ARCHS 含两种架构但 ONLY_ACTIVE_ARCH=YES，只为本机编译。
+if [ -n "${ARCHS:-}" ] && [[ "$ARCHS" == *x86_64* ]] && [[ "$ARCHS" == *arm64* ]] \
+   && [ "${ONLY_ACTIVE_ARCH:-NO}" != YES ]; then UNIVERSAL=1; fi
 
 # Xcode 运行脚本时 PATH 很精简，补上 cargo
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
