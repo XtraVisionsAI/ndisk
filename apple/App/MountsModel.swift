@@ -36,7 +36,10 @@ final class MountsModel: ObservableObject {
         ticker = Timer.scheduledTimer(withTimeInterval: Self.signalInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.signalAll() }
         }
-        Task { await refreshDomains() }
+        Task {
+            await restoreMissingDomains()
+            await refreshDomains()
+        }
     }
 
     private func domain(_ m: SharedStore.Mount) -> NSFileProviderDomain {
@@ -70,6 +73,23 @@ final class MountsModel: ObservableObject {
         return (try? parseOpendalConfig(configToml: toml)).map(MountSpecAny.opendal)
     }
 
+    /// 移除前确认：会删除配置、凭据与本地缓存；有未上传修改时额外警告（这些修改会丢失）。
+    func confirmRemove(_ m: SharedStore.Mount) -> Bool {
+        let pending = store?.readStatus(m.id)?.pendingUploads ?? 0
+        let alert = NSAlert()
+        alert.alertStyle = pending > 0 ? .critical : .warning
+        alert.messageText = "移除挂载“\(m.displayName)”？"
+        var info = "将删除该挂载的配置、钥匙串中的凭据与本地缓存，云端文件不受影响。只想暂时停用可以改用“断开”。"
+        if pending > 0 {
+            info += "\n\n还有 \(pending) 个文件的修改尚未上传，移除后这些修改将丢失。"
+        }
+        alert.informativeText = info
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "移除").hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
     func remove(_ m: SharedStore.Mount) {
         Task {
             do {
@@ -84,6 +104,48 @@ final class MountsModel: ObservableObject {
     }
 
     // MARK: 断开 / 连接
+
+    /// 登记了但系统中不存在的 domain 重新注册。替换 App 包（更新、重新安装）时系统会移除
+    /// 原 App 的全部 domain；配置、密钥与扩展的元数据都还在，以同一 id 重新 add 即可恢复。
+    private func restoreMissingDomains() async {
+        guard let store else { return }
+        let domains: [NSFileProviderDomain]
+        do {
+            domains = try await NSFileProviderManager.domains()
+        } catch {
+            log.error("list domains failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+        // 登记表丢失的挂载从配置文件找回（显示名取自配置）。
+        for id in store.orphanMountIds() {
+            guard let toml = try? String(contentsOf: store.configURL(id), encoding: .utf8) else { continue }
+            let name = Self.displayName(fromConfig: toml) ?? id
+            do {
+                try store.register(SharedStore.Mount(id: id, displayName: name))
+                log.notice("recovered orphan mount \(id, privacy: .public)")
+            } catch {
+                log.error("recover mount \(id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+        mounts = store.mounts()
+        let registered = Set(domains.map(\.identifier.rawValue))
+        let ids = mounts.map(\.id)
+        log.notice("domains registered=\(registered.sorted(), privacy: .public) mounts=\(ids, privacy: .public)")
+        for m in store.mounts() where !registered.contains(m.id) {
+            do {
+                try await NSFileProviderManager.add(domain(m))
+                log.notice("restored missing domain \(m.id, privacy: .public)")
+            } catch {
+                log.error("restore domain \(m.id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    static func displayName(fromConfig toml: String) -> String? {
+        guard let scheme = try? mountScheme(configToml: toml) else { return nil }
+        if scheme == "s3" { return try? parseS3Config(configToml: toml).displayName }
+        return try? parseOpendalConfig(configToml: toml).displayName
+    }
 
     func refreshDomains() async {
         guard let domains = try? await NSFileProviderManager.domains() else { return }

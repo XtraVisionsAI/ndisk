@@ -79,24 +79,49 @@ public struct SharedStore: Sendable {
     }
 
     public func mounts() -> [Mount] {
+        (try? loadMounts()) ?? []
+    }
+
+    /// 读登记表。文件不存在视为空；存在但读不出（权限、损坏）时抛错，
+    /// 写入方据此放弃，避免用空列表覆盖掉其余挂载的登记。
+    func loadMounts() throws -> [Mount] {
         migrateLegacyLayout()
-        guard let data = try? Data(contentsOf: mountsFile) else { return [] }
-        return (try? JSONDecoder().decode([Mount].self, from: data)) ?? []
+        guard FileManager.default.fileExists(atPath: mountsFile.path) else { return [] }
+        return try JSONDecoder().decode([Mount].self, from: Data(contentsOf: mountsFile))
     }
 
     public func save(mount: Mount, configToml: String, secret: String?) throws {
         let fm = FileManager.default
+        var all = try loadMounts().filter { $0.id != mount.id }
         try fm.createDirectory(at: configURL(mount.id).deletingLastPathComponent(), withIntermediateDirectories: true)
         try configToml.write(to: configURL(mount.id), atomically: true, encoding: .utf8)
         if let secret, !secret.isEmpty { try setSecret(secret, for: mount.id) }
         try fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
-        var all = mounts().filter { $0.id != mount.id }
         all.append(mount)
         try JSONEncoder().encode(all).write(to: mountsFile, options: .atomic)
     }
 
+    /// 有配置文件但不在登记表里的挂载 id（登记表曾被覆盖或丢失时，配置、密钥与缓存都还在）。
+    public func orphanMountIds() -> [String] {
+        let dir = configURL("x").deletingLastPathComponent()
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        let known = Set(mounts().map(\.id))
+        return files.filter { $0.hasSuffix(".toml") }
+            .map { String($0.dropLast(5)) }
+            .filter { !$0.isEmpty && !known.contains($0) }
+            .sorted()
+    }
+
+    /// 只补登记，不改配置与密钥。
+    public func register(_ mount: Mount) throws {
+        var all = try loadMounts().filter { $0.id != mount.id }
+        all.append(mount)
+        try FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        try JSONEncoder().encode(all).write(to: mountsFile, options: .atomic)
+    }
+
     public func remove(mountId: String) throws {
-        let all = mounts().filter { $0.id != mountId }
+        let all = try loadMounts().filter { $0.id != mountId }
         try JSONEncoder().encode(all).write(to: mountsFile, options: .atomic)
         try? FileManager.default.removeItem(at: configURL(mountId))
         try? FileManager.default.removeItem(at: cacheURL(mountId))

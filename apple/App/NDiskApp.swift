@@ -82,7 +82,7 @@ struct MenuContent: View {
                         .help("编辑")
                     Button { model.toggleConnection(m) } label: { Image(systemName: off ? "play.circle" : "eject") }
                         .help(off ? "连接" : "断开（保留配置与缓存）")
-                    Button { model.remove(m) } label: { Image(systemName: "trash") }
+                    Button { if model.confirmRemove(m) { model.remove(m) } } label: { Image(systemName: "trash") }
                         .help("移除挂载")
                 }
                 .buttonStyle(.borderless)
