@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Security
 
 /// App 与扩展共享的存储布局（位于 App Group 容器内，遵循 macOS 惯例）：
@@ -206,6 +207,7 @@ public struct SharedStore: Sendable {
     // MARK: 钥匙串
 
     static let service = "ai.xtravisions.ndisk.secret"
+    static let log = Logger(subsystem: "ai.xtravisions.ndisk", category: "Keychain")
 
     private func baseQuery(_ id: String) -> [String: Any] {
         var q: [String: Any] = [
@@ -225,6 +227,7 @@ public struct SharedStore: Sendable {
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         let status = SecItemAdd(q as CFDictionary, nil)
         guard status == errSecSuccess else {
+            Self.log.error("keychain write \(id, privacy: .public) group=\(self.keychainAccessGroup ?? "-", privacy: .public) failed: \(status)")
             throw NdiskError.Config(message: "keychain write failed: \(status)")
         }
     }
@@ -234,7 +237,13 @@ public struct SharedStore: Sendable {
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        guard status == errSecSuccess, let data = out as? Data else {
+            if status != errSecItemNotFound {
+                Self.log.error("keychain read \(id, privacy: .public) group=\(self.keychainAccessGroup ?? "-", privacy: .public) failed: \(status)")
+            }
+            return nil
+        }
         return String(data: data, encoding: .utf8)
     }
 
