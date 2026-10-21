@@ -22,7 +22,7 @@
 | 最低系统 | macOS 13+（原定 12.3，因右键动作与 contentPolicy 提高）、Windows 10 1709+、Linux 需 FUSE3 |
 | 缓存加密 | 不需要 |
 | 网络 | 支持 HTTP(S) 代理、上传/下载限速 |
-| 授权 | 开源版 + 商用版（open core），第三方依赖只用商业友好许可（MIT / Apache-2.0 / BSD / MPL-2.0），不引入 GPL / AGPL |
+| 授权 | 全部 Apache-2.0 开源（2026-10-21 决定，取代最初的 open core 方案）；第三方依赖只用商业友好许可（MIT / Apache-2.0 / BSD / MPL-2.0），不引入 GPL / AGPL |
 
 **非目标**
 
@@ -249,11 +249,11 @@ ndisk/
 │   ├── ndisk-cli/             # CLI（Apache-2.0）
 │   ├── ndisk-fuse/            # Linux FUSE（Apache-2.0）
 │   └── ndisk-ffi/             # UniFFI 绑定（Apache-2.0）
-└── apple/                     # Xcode 工程：App + File Provider 扩展（商用版私有仓库，开源版可提供精简版）
+└── apple/                     # Xcode 工程：菜单栏 App + File Provider 扩展（Apache-2.0）
 ```
 
-- 开源版：核心库、后端、CLI、FUSE 以 Apache-2.0 发布。
-- 商用版：macOS / Windows 图形应用、系统扩展、安装与自动更新，闭源。
+- 全部代码（核心库、后端、CLI、FUSE、macOS App 与扩展）以 Apache-2.0 发布，见根目录 `LICENSE` / `NOTICE`。
+- 分发：macOS 版以 Developer ID 签名并公证后通过 GitHub Releases 提供 DMG，Sparkle 自动更新。
 - 依赖许可白名单：MIT、Apache-2.0、BSD-2/3、MPL-2.0、ISC、Zlib。CI 用 `cargo-deny` 强制检查。
 
 当前关键依赖及许可：`tokio`(MIT)、`aws-sdk-s3`(Apache-2.0)、`opendal`(Apache-2.0)、`fuser`(MIT)、`rusqlite`(MIT)、`uniffi`(MPL-2.0)、`clap`(MIT/Apache-2.0)。

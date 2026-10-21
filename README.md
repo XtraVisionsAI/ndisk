@@ -84,4 +84,4 @@ ndisk -c my.toml cache gc                         # 立即执行一次维护
 
 ## 授权
 
-核心库、后端、CLI、FUSE 以 Apache-2.0 发布。图形应用与系统扩展属于商用版。
+全部代码（核心库、后端、CLI、FUSE、macOS App 与 File Provider 扩展）以 [Apache License 2.0](LICENSE) 发布，见 [NOTICE](NOTICE)。
