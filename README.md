@@ -72,6 +72,23 @@ NDISK_BUNDLE_PREFIX = ai.xtravisions.ndisk
 
 全局设置（代理、限速、缓存上限、默认策略）在菜单栏"设置…"中；每个挂载可编辑显示名、凭据、策略覆盖与只读，可断开 / 连接而不删除配置。
 
+### 发布（签名、公证、DMG）
+
+```sh
+apple/scripts/release.sh --dev            # 演练：开发证书导出 + DMG，不公证
+apple/scripts/release.sh                  # 正式：Developer ID 签名，App 与 DMG 分别公证并装订
+```
+
+正式发布的一次性准备：在 Xcode → Settings → Accounts 登录团队账号，并在 Manage Certificates 中创建
+Developer ID Application 证书（需 Account Holder 或 Admin 角色；共享钥匙串所需的描述文件由 Xcode 在导出时自动获取）；
+用 app 专用密码保存公证凭据：
+
+```sh
+xcrun notarytool store-credentials ndisk-notary --apple-id <Apple ID> --team-id <Team ID> --password <app 专用密码>
+```
+
+产物为 `target/release-app/NDisk-<版本>.dmg`（arm64 + x86_64 通用）及 `.sha256`。
+
 ## 缓存控制
 
 ```sh
