@@ -4,10 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited：PR 改基准分支时重跑（例如堆叠 PR 的下层合并后改指 main）。
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
+# 只改标题、描述的 edited 事件不跑任何作业（见各作业的 if），且放进单独的并发组，
+# 以免把正在进行的真实运行取消掉。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.event.action == 'edited' && !github.event.changes.base && '-noop' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -19,6 +23,7 @@ env:
 jobs:
   rust:
     name: Rust (fmt, clippy, test)
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +37,7 @@ jobs:
 
   deny:
     name: Licenses & dependency policy
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +48,7 @@ jobs:
 
   advisories:
     name: Security advisories
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     # 新公告随时会出现，与本次改动无关，不阻断合并，只提示。
     continue-on-error: true
@@ -68,6 +75,7 @@ jobs:
 
   macos:
     name: macOS app (unsigned build)
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: macos-26
     timeout-minutes: 45
     steps:
