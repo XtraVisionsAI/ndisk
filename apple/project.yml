@@ -12,6 +12,10 @@ configFiles:
 packages:
   NdiskKit:
     path: NdiskKit
+  # 自动更新（MIT）。沙盒模式：安装经 Sparkle 的 Installer XPC 服务完成。
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.0"
 targets:
   NDisk:
     type: application
@@ -32,6 +36,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
     dependencies:
       - package: NdiskKit
+      - package: Sparkle
       - target: NDiskFileProvider
         embed: true
         codeSign: true
