@@ -1,5 +1,6 @@
 import AppKit
 import NdiskKit
+import Sparkle
 import SwiftUI
 
 @main
@@ -8,7 +9,7 @@ struct NDiskApp: App {
 
     var body: some Scene {
         MenuBarExtra("NDisk", systemImage: "externaldrive.connected.to.line.below") {
-            MenuContent(model: delegate.model)
+            MenuContent(model: delegate.model, checkForUpdates: delegate.checkForUpdates)
         }
         .menuBarExtraStyle(.window)
 
@@ -40,6 +41,25 @@ struct NDiskApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = MountsModel()
+    /// 未配置公钥（本地开发构建）时不启动更新器，避免 Sparkle 报配置错误。
+    private lazy var updater: SPUStandardUpdaterController? = {
+        let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
+        guard !key.isEmpty else { return nil }
+        return SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    }()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = updater
+    }
+
+    func checkForUpdates() {
+        guard let updater else {
+            model.lastError = "此构建未配置更新公钥，无法检查更新"
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        updater.checkForUpdates(nil)
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -50,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct MenuContent: View {
     @ObservedObject var model: MountsModel
+    let checkForUpdates: () -> Void
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -100,6 +121,7 @@ struct MenuContent: View {
                     openWindow(id: "settings")
                     NSApp.activate(ignoringOtherApps: true)
                 }
+                Button("检查更新…") { checkForUpdates() }
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }
                     .help("只退出菜单栏程序；挂载由系统继续提供，不受影响")

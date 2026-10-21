@@ -13,7 +13,14 @@
 #         --apple-id <Apple ID> --team-id <Team ID> --password <app 专用密码>
 #     配置名可用 NDISK_NOTARY_PROFILE 覆盖。
 #
-# 产物：target/release-app/NDisk-<版本>.dmg 及其 .sha256
+#   - Sparkle 更新签名密钥已生成（只需一次，私钥存于钥匙串，务必备份）：
+#       <Sparkle>/bin/generate_keys            # 打印公钥，填入 Config/NDisk.xcconfig 的 NDISK_SPARKLE_PUBLIC_KEY
+#       <Sparkle>/bin/generate_keys -x 备份文件 # 导出私钥备份
+#   - 每次发布前递增 Config/NDisk.xcconfig 的 MARKETING_VERSION 与 CURRENT_PROJECT_VERSION
+#     （Sparkle 按 CURRENT_PROJECT_VERSION 比较新旧）
+#
+# 产物：target/release-app/NDisk-<版本>.dmg 及其 .sha256；正式模式另有 appcast.xml，
+#       与 DMG 一起上传到 GitHub Release v<版本>（SUFeedURL 指向 latest/download/appcast.xml）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(cd .. && pwd)
@@ -35,6 +42,10 @@ TEAM=$(sed -n 's/^NDISK_TEAM_ID *= *//p' Config/Signing.local.xcconfig 2>/dev/nu
 VERSION=$(sed -n 's/^MARKETING_VERSION *= *//p' Config/NDisk.xcconfig | tr -d '[:space:]')
 BUILD=$(sed -n 's/^CURRENT_PROJECT_VERSION *= *//p' Config/NDisk.xcconfig | tr -d '[:space:]')
 SUFFIX=$([ $MODE = dev ] && echo "-dev" || echo "")
+PUBKEY=$(sed -n 's/^NDISK_SPARKLE_PUBLIC_KEY *= *//p' Config/NDisk.xcconfig Config/Signing.local.xcconfig 2>/dev/null | tr -d '[:space:]' | tail -1)
+if [ $MODE = release ] && [ -z "$PUBKEY" ]; then
+  echo "NDISK_SPARKLE_PUBLIC_KEY is empty: released builds could never receive updates (see header)" >&2; exit 1
+fi
 DMG="$OUT/NDisk-$VERSION$SUFFIX.dmg"
 
 rm -rf "$OUT" && mkdir -p "$OUT"
@@ -103,7 +114,19 @@ if [ $NOTARIZE = 1 ]; then
   spctl --assess --type execute --verbose=2 "$APP"
 fi
 
+if [ $MODE = release ]; then
+  step "appcast"
+  SPARKLE_BIN="$ROOT/target/xcode-release/SourcePackages/artifacts/sparkle/Sparkle/bin"
+  mkdir -p "$OUT/updates" && cp "$DMG" "$OUT/updates/"
+  # 私钥从钥匙串读取；EdDSA 签名与长度写入 enclosure。
+  "$SPARKLE_BIN/generate_appcast" \
+    --download-url-prefix "https://github.com/XtraVisionsAI/ndisk/releases/download/v$VERSION/" \
+    -o "$OUT/appcast.xml" "$OUT/updates"
+  grep -q 'sparkle:edSignature' "$OUT/appcast.xml" || { echo "appcast has no EdDSA signature" >&2; exit 1; }
+fi
+
 (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
 step "done"
 echo "$DMG"
 cat "$DMG.sha256"
+[ $MODE = release ] && echo "upload with: gh release create v$VERSION \"$DMG\" \"$OUT/appcast.xml\" --repo XtraVisionsAI/ndisk"
