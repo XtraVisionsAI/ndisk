@@ -41,11 +41,5 @@
 	<string>$(NDISK_APP_GROUP)</string>
 	<key>NdiskKeychainGroup</key>
 	<string>$(NDISK_KEYCHAIN_GROUP)</string>
-	<key>SUFeedURL</key>
-	<string>$(NDISK_SPARKLE_FEED_URL)</string>
-	<key>SUPublicEDKey</key>
-	<string>$(NDISK_SPARKLE_PUBLIC_KEY)</string>
-	<key>SUEnableInstallerLauncherService</key>
-	<true/>
 </dict>
 </plist>

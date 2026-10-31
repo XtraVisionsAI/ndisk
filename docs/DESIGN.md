@@ -253,7 +253,7 @@ ndisk/
 ```
 
 - 全部代码（核心库、后端、CLI、FUSE、macOS App 与扩展）以 Apache-2.0 发布，见根目录 `LICENSE` / `NOTICE`。
-- 分发：macOS 版以 Developer ID 签名并公证后通过 GitHub Releases 提供 DMG，Sparkle 自动更新。
+- 分发：免费软件。macOS 版以 Developer ID 签名并公证后通过 GitHub Releases 提供 DMG，并计划通过 Homebrew Cask 安装与更新（因此不内置 Sparkle，避免两套更新机制互相覆盖）。
 - 依赖许可白名单：MIT、Apache-2.0、BSD-2/3、MPL-2.0、ISC、Zlib。CI 用 `cargo-deny` 强制检查。
 
 当前关键依赖及许可：`tokio`(MIT)、`aws-sdk-s3`(Apache-2.0)、`opendal`(Apache-2.0)、`fuser`(MIT)、`rusqlite`(MIT)、`uniffi`(MPL-2.0)、`clap`(MIT/Apache-2.0)。
