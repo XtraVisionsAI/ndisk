@@ -19,8 +19,4 @@ ENABLE_HARDENED_RUNTIME = YES
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 
-// Sparkle 自动更新：appcast 随每个 GitHub Release 发布；公钥对应维护者钥匙串中的 EdDSA 私钥。
-NDISK_SPARKLE_FEED_URL = https:/$()/github.com/XtraVisionsAI/ndisk/releases/latest/download/appcast.xml
-NDISK_SPARKLE_PUBLIC_KEY =
-
 #include? "Signing.local.xcconfig"

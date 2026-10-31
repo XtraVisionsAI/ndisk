@@ -87,18 +87,7 @@ Developer ID Application 证书（需 Account Holder 或 Admin 角色；共享�
 xcrun notarytool store-credentials ndisk-notary --apple-id <Apple ID> --team-id <Team ID> --password <app 专用密码>
 ```
 
-自动更新用 Sparkle（EdDSA 签名）。一次性生成更新签名密钥（私钥存于登录钥匙串，**务必备份**，丢失后已安装的用户将无法再收到更新），
-把打印出的公钥填入 `apple/Config/NDisk.xcconfig` 的 `NDISK_SPARKLE_PUBLIC_KEY`：
-
-```sh
-SPARKLE=target/xcode/SourcePackages/artifacts/sparkle/Sparkle/bin   # 构建一次 App 后出现
-$SPARKLE/generate_keys                     # 生成并打印公钥
-$SPARKLE/generate_keys -x ~/ndisk-sparkle-private.key   # 导出私钥备份（妥善离线保存）
-```
-
-每次发布前递增 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`。产物为 `target/release-app/NDisk-<版本>.dmg`（arm64 + x86_64 通用）、
-`.sha256` 与 `appcast.xml`，按脚本最后打印的 `gh release create` 命令上传到 GitHub Release `v<版本>`；
-App 的更新源固定为 `releases/latest/download/appcast.xml`。
+产物为 `target/release-app/NDisk-<版本>.dmg`（arm64 + x86_64 通用）及 `.sha256`。
 
 ## 缓存控制
 

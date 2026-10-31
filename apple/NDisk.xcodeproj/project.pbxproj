@@ -19,7 +19,6 @@
 		DDED06EDC0DD0D0C5EE7C909 /* PinnedBadge.icns in Resources */ = {isa = PBXBuildFile; fileRef = CFCDDC1591A8B260C7C7181C /* PinnedBadge.icns */; };
 		E942F6D37F31812B89B2F6D2 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 227A88E3FE733D9010006D31 /* AppIcon.icon */; };
 		EE272EBD480766DED360DCE9 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B88564D1C72681750AFF99 /* FileProviderItem.swift */; };
-		F69188116F986DF28E07F571 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B5BD9F86868DA4007DC0C63D /* Sparkle */; };
 		FFC3BA23E5CBF128403D781A /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F1063299E6C90E63D0E0E6 /* FileProviderEnumerator.swift */; };
 /* End PBXBuildFile section */
 
@@ -70,7 +69,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				4905C602D8FAFDA1DBD06830 /* NdiskKit in Frameworks */,
-				F69188116F986DF28E07F571 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -193,7 +191,6 @@
 			name = NDisk;
 			packageProductDependencies = (
 				7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */,
-				B5BD9F86868DA4007DC0C63D /* Sparkle */,
 			);
 			productName = NDisk;
 			productReference = EAFADB2E00BC2C6A02B3A6B9 /* NDisk.app */;
@@ -228,7 +225,6 @@
 			mainGroup = F02E8DCE9036447EDC4D80E8;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				2BDB850E8029ABDBFA21A5A4 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				7FF940312138CB09ED8E518C /* XCLocalSwiftPackageReference "NdiskKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -525,17 +521,6 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		2BDB850E8029ABDBFA21A5A4 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.9.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
 		75A0D1C83F997E594D0C5ED4 /* NdiskKit */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -544,11 +529,6 @@
 		7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = NdiskKit;
-		};
-		B5BD9F86868DA4007DC0C63D /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2BDB850E8029ABDBFA21A5A4 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
