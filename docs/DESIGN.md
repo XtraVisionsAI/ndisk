@@ -263,7 +263,7 @@ ndisk/
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | M1 | 核心引擎 + S3 后端 + CLI + Linux FUSE | Linux 下挂载 S3 兼容服务读写，进程被杀后重挂载上传续传。**已完成**（2026-10-16，见 `scripts/e2e`）|
-| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**基本完成**（2026-10-16）：读写、角标、右键动作、TTL 驱逐、远端变更轮询在真机确认，冲突副本有单元测试，App 显示状态；剩余：共享动态框架减体积 |
+| M2 | macOS File Provider 扩展 + 菜单栏 App | Finder 中可见角标、按需下载、TTL 驱逐、右键动作。**基本完成**（2026-10-16）：读写、角标、右键动作、TTL 驱逐、远端变更轮询在真机确认，冲突副本有单元测试，App 显示状态。2026-10-31：Rust 核心改为 App 内嵌的共享动态框架 NdiskKit.framework（扩展经 rpath 共用），只导出 Swift 符号并 dead-strip，App 130 MB → 36 MB、DMG 59 MB → 19 MB |
 | M3 | OpenDAL 后端接入 OSS / WebDAV / Dropbox | 同一套 CLI 挂载三种后端通过回归测试。**基本完成**（2026-10-19）：WebDAV 在 Docker（Apache mod_dav）中复跑全部 25 项 FUSE 检查通过，菜单栏 App 可添加 WebDAV / Dropbox 挂载；OSS、Dropbox 尚待真实账号验证；Dropbox 的 OAuth 授权流程（免手动生成 token）待做 |
 | M4 | Windows Cloud Files API | 资源管理器中占位符、按需下载、角标 |
 

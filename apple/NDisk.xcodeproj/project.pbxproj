@@ -12,6 +12,7 @@
 		263A9CC15F4AB9700EDF14B5 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C21F9AFAF99751F2E66B50 /* FileProviderExtension.swift */; };
 		47D0B8ABF44F9FBA2FCAEFAE /* NDiskFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6BBB1128E385DD94088A41E6 /* NDiskFileProvider.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		4905C602D8FAFDA1DBD06830 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */; };
+		65EB0EF8654749BFA4157F8B /* NdiskKit in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 7ECA7B6B3A09CA770E5EEA9B /* NdiskKit */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		6B3E650EE7EFD539F8402030 /* NdiskKit in Frameworks */ = {isa = PBXBuildFile; productRef = 75A0D1C83F997E594D0C5ED4 /* NdiskKit */; };
 		7AD8CFE04A40A5BAADF2E9CA /* MountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFA7A63883209936D438B34 /* MountsModel.swift */; };
 		7F1C760E013E474D5B9A3C6D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93B1DD5CA23D03297A119BC1 /* Assets.xcassets */; };
@@ -33,6 +34,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		8482252FCF89CCD7A808BD64 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				65EB0EF8654749BFA4157F8B /* NdiskKit in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8E1464C13431AEC4A805EF48 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -182,6 +194,7 @@
 				20BC3CD01D106443EC110793 /* Resources */,
 				079ACF06250D3E9A1052050C /* Frameworks */,
 				8E1464C13431AEC4A805EF48 /* Embed Foundation Extensions */,
+				8482252FCF89CCD7A808BD64 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
