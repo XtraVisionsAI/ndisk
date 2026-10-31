@@ -31,7 +31,11 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/NDisk.entitlements
         GENERATE_INFOPLIST_FILE: NO
     dependencies:
+      # NdiskKit 是动态框架（含 Rust 核心），只嵌入 App 一份；扩展不嵌入，经 rpath
+      # @executable_path/../../../../Frameworks 加载 App 内的同一份。
       - package: NdiskKit
+        embed: true
+        codeSign: true
       - target: NDiskFileProvider
         embed: true
         codeSign: true
@@ -51,6 +55,7 @@ targets:
         SKIP_INSTALL: YES
     dependencies:
       - package: NdiskKit
+        embed: false
 schemes:
   NDisk:
     build:
